@@ -549,9 +549,10 @@ fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
         }
     }
 
-    // Parse entries - strip History sections first to avoid parsing old entry versions
-    let xml_without_history = remove_history_sections(xml_str);
-    let entry_elements = find_elements(&xml_without_history, "Entry");
+    // Parse entries - find top-level entries only (not those inside <History>)
+    // We need to parse entries from the original XML to get their history,
+    // but only parse top-level Entry elements (not nested ones in History)
+    let entry_elements = find_top_level_entries(xml_str);
 
     for entry_match in entry_elements.iter() {
         if let Some(entry) = parse_entry_element(&entry_match) {
@@ -594,6 +595,18 @@ fn find_xml_start(data: &[u8]) -> Result<usize, String> {
     Err("Could not find XML start".to_string())
 }
 
+/// A historical version of an entry
+#[derive(Serialize, Clone)]
+struct HistoryEntry {
+    title: String,
+    username: String,
+    password: Option<String>,
+    url: String,
+    notes: String,
+    /// Last modification time of this history version
+    last_modification_time: Option<String>,
+}
+
 #[derive(Serialize)]
 struct SimpleEntry {
     uuid: String,
@@ -605,6 +618,9 @@ struct SimpleEntry {
     parent_group: Option<String>,
     /// TOTP/OTP configuration (otpauth:// URI or bare secret)
     otp: Option<String>,
+    /// Historical versions of this entry (oldest first)
+    #[serde(default)]
+    history: Vec<HistoryEntry>,
 }
 
 #[derive(Serialize)]
@@ -613,6 +629,123 @@ struct SimpleGroup {
     name: String,
     parent: Option<String>,
     icon_id: Option<u32>,
+}
+
+/// Find top-level Entry elements (not those nested inside <History>)
+fn find_top_level_entries(xml: &str) -> Vec<String> {
+    let mut results = Vec::new();
+    let open_tag_exact = "<Entry>";
+    let open_tag_attr = "<Entry ";
+
+    let mut search_pos = 0;
+    while search_pos < xml.len() {
+        // Find either <Entry> or <Entry with attributes
+        let start_exact = xml[search_pos..].find(open_tag_exact);
+        let start_attr = xml[search_pos..].find(open_tag_attr);
+
+        let start = match (start_exact, start_attr) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+
+        match start {
+            Some(rel_start) => {
+                let abs_start = search_pos + rel_start;
+
+                // Check if this Entry is inside a <History> section
+                // Look backwards for <History> and </History>
+                let before = &xml[..abs_start];
+                let last_history_open = before.rfind("<History>");
+                let last_history_close = before.rfind("</History>");
+
+                let is_inside_history = match (last_history_open, last_history_close) {
+                    (Some(open), Some(close)) => open > close, // Inside if <History> is after </History>
+                    (Some(_), None) => true,                   // Inside if <History> but no </History>
+                    _ => false,
+                };
+
+                // Find the matching </Entry> (accounting for nesting)
+                if let Some(end_pos) = find_matching_close_tag(&xml[abs_start..], "Entry") {
+                    let abs_end = abs_start + end_pos;
+
+                    if !is_inside_history {
+                        let entry_xml = &xml[abs_start..abs_end];
+                        // Debug: check if this entry has history
+                        let has_history = entry_xml.contains("<History>");
+                        web_sys::console::log_1(&format!("Found top-level entry, has_history={}, len={}", has_history, entry_xml.len()).into());
+                        results.push(entry_xml.to_string());
+                    }
+
+                    search_pos = abs_end;
+                } else {
+                    break;
+                }
+            }
+            None => break,
+        }
+    }
+
+    web_sys::console::log_1(&format!("find_top_level_entries found {} entries", results.len()).into());
+    results
+}
+
+/// Find the position of the matching closing tag, accounting for nested tags
+/// xml should start AT the opening tag (e.g., "<Entry>...")
+fn find_matching_close_tag(xml: &str, tag: &str) -> Option<usize> {
+    let open_tag_exact = format!("<{}>", tag);
+    let open_tag_attr = format!("<{} ", tag);
+    let close_tag = format!("</{}>", tag);
+
+    // We start AT an opening tag, so depth starts at 1
+    let mut depth = 1;
+
+    // Skip past the initial opening tag
+    let initial_tag_end = xml.find('>')? + 1;
+    let mut pos = initial_tag_end;
+
+    while pos < xml.len() {
+        // Look for next open or close tag
+        let next_open_exact = xml[pos..].find(&open_tag_exact);
+        let next_open_attr = xml[pos..].find(&open_tag_attr);
+        let next_close = xml[pos..].find(&close_tag);
+
+        let next_open = match (next_open_exact, next_open_attr) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+
+        match (next_open, next_close) {
+            (Some(open), Some(close)) if open < close => {
+                // Found open tag first - nested element
+                depth += 1;
+                pos += open + 1; // Move past the '<'
+            }
+            (_, Some(close)) => {
+                // Found close tag (or close tag is before open tag)
+                depth -= 1;
+                if depth == 0 {
+                    // This is the matching close tag
+                    return Some(pos + close + close_tag.len());
+                }
+                pos += close + close_tag.len();
+            }
+            (Some(open), None) => {
+                // Only found open tag, no close tag
+                depth += 1;
+                pos += open + 1;
+            }
+            (None, None) => {
+                // No more tags found
+                return None;
+            }
+        }
+    }
+
+    None
 }
 
 /// Remove all <History>...</History> sections from XML to avoid parsing old entry versions
@@ -684,13 +817,16 @@ fn find_elements(xml: &str, tag: &str) -> Vec<String> {
 }
 
 fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
-    // Extract the part before <History> to avoid parsing history entries' data
-    // Main entries contain a <History> section, but we want to parse the main entry data
-    // History entries are nested inside <History><Entry>...</Entry></History>
-    let xml_to_parse = if let Some(history_pos) = xml.find("<History>") {
-        &xml[..history_pos]
+    // Extract the part before <History> to parse the main entry data
+    // Also extract the History section separately to parse historical versions
+    let (xml_to_parse, history_xml) = if let Some(history_pos) = xml.find("<History>") {
+        let history_end = xml.find("</History>").unwrap_or(xml.len());
+        let hist_section = &xml[history_pos..history_end + "</History>".len()];
+        web_sys::console::log_1(&format!("Found History section at pos {}, len={}", history_pos, hist_section.len()).into());
+        (&xml[..history_pos], Some(hist_section))
     } else {
-        xml
+        web_sys::console::log_1(&"No <History> tag found in entry".into());
+        (xml, None)
     };
 
     let uuid = extract_tag_value(xml_to_parse, "UUID")?;
@@ -703,6 +839,15 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     let otp = extract_string_value(xml_to_parse, "otp")
         .or_else(|| extract_string_value(xml_to_parse, "TOTP Seed"));
 
+    // Parse history entries
+    let history = if let Some(hist_xml) = history_xml {
+        let h = parse_history_entries(hist_xml);
+        web_sys::console::log_1(&format!("Parsed {} history entries", h.len()).into());
+        h
+    } else {
+        Vec::new()
+    };
+
     Some(SimpleEntry {
         uuid,
         title,
@@ -712,6 +857,40 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         notes,
         parent_group: None, // TODO: track parent
         otp,
+        history,
+    })
+}
+
+/// Parse historical entry versions from a <History>...</History> block
+fn parse_history_entries(history_xml: &str) -> Vec<HistoryEntry> {
+    let mut history = Vec::new();
+
+    // Find all Entry elements within the History block
+    for entry_xml in find_elements(history_xml, "Entry") {
+        if let Some(hist_entry) = parse_history_entry(&entry_xml) {
+            history.push(hist_entry);
+        }
+    }
+
+    history
+}
+
+/// Parse a single history entry
+fn parse_history_entry(xml: &str) -> Option<HistoryEntry> {
+    let title = extract_string_value(xml, "Title").unwrap_or_default();
+    let username = extract_string_value(xml, "UserName").unwrap_or_default();
+    let password = extract_string_value(xml, "Password");
+    let url = extract_string_value(xml, "URL").unwrap_or_default();
+    let notes = extract_string_value(xml, "Notes").unwrap_or_default();
+    let last_modification_time = extract_tag_value(xml, "LastModificationTime");
+
+    Some(HistoryEntry {
+        title,
+        username,
+        password,
+        url,
+        notes,
+        last_modification_time,
     })
 }
 

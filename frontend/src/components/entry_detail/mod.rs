@@ -1,11 +1,10 @@
 //! Entry detail/editor component
 
 use leptos::*;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::password_generator::PasswordGenerator;
-use crate::state::AppState;
+use crate::state::{AppState, HistoryEntryInfo};
 use crate::utils::clipboard;
 
 mod totp;
@@ -18,6 +17,7 @@ pub fn EntryDetail() -> impl IntoView {
 
     let show_password = create_rw_signal(false);
     let show_generator = create_rw_signal(false);
+    let show_history = create_rw_signal(false);
     let copied_field = create_rw_signal(Option::<String>::None);
 
     view! {
@@ -33,6 +33,7 @@ pub fn EntryDetail() -> impl IntoView {
                         let url = e.url.clone();
                         let notes = e.notes.clone();
                         let otp = e.otp.clone();
+                        let history = e.history.clone();
                         let url_for_link = url.clone();
                         let url_is_empty = url.is_empty();
 
@@ -46,8 +47,10 @@ pub fn EntryDetail() -> impl IntoView {
                                 url_is_empty=url_is_empty
                                 notes=notes
                                 otp=otp
+                                history=history
                                 show_password=show_password
                                 show_generator=show_generator
+                                show_history=show_history
                                 copied_field=copied_field
                             />
                         }.into_view()
@@ -69,8 +72,10 @@ fn EntryDetailContent(
     url_is_empty: bool,
     notes: String,
     otp: Option<String>,
+    history: Vec<HistoryEntryInfo>,
     show_password: RwSignal<bool>,
     show_generator: RwSignal<bool>,
+    show_history: RwSignal<bool>,
     copied_field: RwSignal<Option<String>>,
 ) -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -126,9 +131,12 @@ fn EntryDetailContent(
         }
     });
 
+    // Clone title for use in header (original is used in history viewer)
+    let title_for_header = title.clone();
+
     view! {
         <div class="entry-detail-header">
-            <h2>{title}</h2>
+            <h2>{title_for_header}</h2>
             <button class="btn-icon" on:click=move |_| state.selected_entry.set(None) title="Close">
                 <svg viewBox="0 0 24 24" width="20" height="20">
                     <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -252,6 +260,26 @@ fn EntryDetailContent(
         </div>
 
         <div class="entry-detail-footer">
+            {
+                let history_len = history.len();
+                let has_history = history_len > 0;
+                view! {
+                    <button
+                        class="btn btn-secondary"
+                        disabled=!has_history
+                        on:click=move |_| show_history.set(true)
+                        title=move || if has_history { format!("{} versions", history_len) } else { "No history".to_string() }
+                    >
+                        <HistoryIcon />
+                        " History"
+                        {if has_history {
+                            view! { <span class="history-count">{history_len}</span> }.into_view()
+                        } else {
+                            view! { <span></span> }.into_view()
+                        }}
+                    </button>
+                }
+            }
             <button class="btn btn-secondary" disabled=true title="Coming soon">
                 "Edit"
             </button>
@@ -263,6 +291,15 @@ fn EntryDetailContent(
         // Password generator modal
         <Show when=move || show_generator.get()>
             <PasswordGenerator on_close=move || show_generator.set(false) />
+        </Show>
+
+        // History viewer modal
+        <Show when=move || show_history.get()>
+            <HistoryViewer
+                history=history.clone()
+                entry_title=title.clone()
+                on_close=move || show_history.set(false)
+            />
         </Show>
     }
 }
@@ -470,5 +507,321 @@ fn TotpField(
                 </button>
             </div>
         </div>
+    }
+}
+
+/// History icon
+#[component]
+fn HistoryIcon() -> impl IntoView {
+    view! {
+        <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/>
+        </svg>
+    }
+}
+
+/// History viewer dialog
+#[component]
+fn HistoryViewer(
+    history: Vec<HistoryEntryInfo>,
+    entry_title: String,
+    on_close: impl Fn() + Clone + 'static,
+) -> impl IntoView {
+    let selected_index = create_rw_signal(Option::<usize>::None);
+    let show_password = create_rw_signal(false);
+
+    // Reverse history so newest is first
+    let history_reversed: Vec<(usize, HistoryEntryInfo)> = history
+        .into_iter()
+        .enumerate()
+        .rev()
+        .collect();
+
+    let on_close_overlay = on_close.clone();
+    let on_close_button = on_close;
+
+    view! {
+        <div class="dialog-overlay" on:click=move |_| on_close_overlay()>
+            <div class="dialog history-dialog" on:click=|e| e.stop_propagation()>
+                <div class="dialog-header">
+                    <h2>"History: " {entry_title}</h2>
+                    <button class="dialog-close" on:click=move |_| on_close_button() title="Close">
+                        <svg viewBox="0 0 24 24" width="20" height="20">
+                            <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="dialog-body">
+                    <div class="history-list">
+                        {history_reversed.iter().map(|(idx, entry)| {
+                            let idx = *idx;
+                            let timestamp = entry.last_modification_time.clone().unwrap_or_else(|| "Unknown date".to_string());
+                            let title = entry.title.clone();
+                            let (relative, rfc3339) = format_timestamp_relative(&timestamp);
+
+                            view! {
+                                <div
+                                    class="history-item"
+                                    class:selected=move || selected_index.get() == Some(idx)
+                                    on:click=move |_| selected_index.set(Some(idx))
+                                >
+                                    <div class="history-item-date" title=rfc3339>{relative}</div>
+                                    <div class="history-item-title">{title}</div>
+                                </div>
+                            }
+                        }).collect_view()}
+                    </div>
+
+                    <div class="history-detail">
+                        {move || {
+                            match selected_index.get() {
+                                None => view! {
+                                    <div class="history-no-selection">
+                                        "Select a version to view details"
+                                    </div>
+                                }.into_view(),
+                                Some(idx) => {
+                                    // Find the entry at this index
+                                    let entry = history_reversed.iter()
+                                        .find(|(i, _)| *i == idx)
+                                        .map(|(_, e)| e.clone());
+
+                                    match entry {
+                                        None => view! {
+                                            <div class="history-no-selection">"Version not found"</div>
+                                        }.into_view(),
+                                        Some(hist_entry) => {
+                                            let password_for_display = hist_entry.password.clone().unwrap_or_default();
+
+                                            view! {
+                                                <div class="history-entry-detail">
+                                                    <div class="history-field">
+                                                        <label>"Title"</label>
+                                                        <div class="history-field-value">{hist_entry.title}</div>
+                                                    </div>
+                                                    <div class="history-field">
+                                                        <label>"Username"</label>
+                                                        <div class="history-field-value">{hist_entry.username}</div>
+                                                    </div>
+                                                    <div class="history-field">
+                                                        <label>"Password"</label>
+                                                        <div class="history-field-value password-field">
+                                                            {move || {
+                                                                if show_password.get() {
+                                                                    password_for_display.clone()
+                                                                } else {
+                                                                    "••••••••".to_string()
+                                                                }
+                                                            }}
+                                                            <button
+                                                                class="btn-icon-small"
+                                                                on:click=move |_| show_password.update(|v| *v = !*v)
+                                                                title=move || if show_password.get() { "Hide" } else { "Show" }
+                                                            >
+                                                                {move || if show_password.get() {
+                                                                    view! { <EyeOffIcon /> }.into_view()
+                                                                } else {
+                                                                    view! { <EyeIcon /> }.into_view()
+                                                                }}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <div class="history-field">
+                                                        <label>"URL"</label>
+                                                        <div class="history-field-value">{hist_entry.url}</div>
+                                                    </div>
+                                                    <div class="history-field">
+                                                        <label>"Notes"</label>
+                                                        <div class="history-field-value notes">{hist_entry.notes}</div>
+                                                    </div>
+                                                    <div class="history-field">
+                                                        <label>"Modified"</label>
+                                                        <div class="history-field-value">
+                                                            {hist_entry.last_modification_time.unwrap_or_else(|| "Unknown".to_string())}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            }.into_view()
+                                        }
+                                    }
+                                }
+                            }
+                        }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+/// Format a KeePass timestamp as relative time (e.g., "2h ago") and RFC 3339
+/// Returns (relative_string, rfc3339_string)
+fn format_timestamp_relative(timestamp: &str) -> (String, String) {
+    // KeePass stores timestamps either as:
+    // 1. ISO format like "2024-01-15T10:30:00Z"
+    // 2. Base64-encoded 8-byte binary (seconds since 0001-01-01)
+
+    // Handle empty or invalid timestamps gracefully
+    if timestamp.is_empty() || timestamp == "Unknown date" {
+        return ("Unknown".to_string(), "Unknown".to_string());
+    }
+
+    // Try to parse the timestamp
+    match parse_keepass_timestamp(timestamp) {
+        Some(epoch_ms) => {
+            let now_ms = js_sys::Date::now() as i64;
+            let diff_ms = now_ms - epoch_ms;
+
+            let relative = format_relative_time(diff_ms);
+
+            // Format as RFC 3339
+            let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(epoch_ms as f64));
+            let rfc3339 = date.to_iso_string().as_string().unwrap_or_else(|| timestamp.to_string());
+
+            (relative, rfc3339)
+        }
+        None => {
+            // Fallback for unparseable timestamps - show raw value
+            (timestamp.to_string(), timestamp.to_string())
+        }
+    }
+}
+
+/// Parse a KeePass timestamp (ISO 8601 or base64-encoded binary) to milliseconds since epoch
+fn parse_keepass_timestamp(timestamp: &str) -> Option<i64> {
+    // First try ISO 8601 parsing
+    let date = js_sys::Date::parse(timestamp);
+    if !date.is_nan() {
+        return Some(date as i64);
+    }
+
+    // Try base64-encoded binary timestamp
+    // KeePass uses 8 bytes representing seconds since 0001-01-01 00:00:00 UTC
+    if let Some(epoch_ms) = parse_base64_timestamp(timestamp) {
+        return Some(epoch_ms);
+    }
+
+    None
+}
+
+/// Parse a base64-encoded KeePass binary timestamp
+/// KeePass stores timestamps as 8-byte little-endian seconds since 0001-01-01
+fn parse_base64_timestamp(b64: &str) -> Option<i64> {
+    // Decode base64
+    let bytes = base64_decode(b64)?;
+    if bytes.len() != 8 {
+        return None;
+    }
+
+    // Read as little-endian i64 (seconds since 0001-01-01)
+    let seconds_since_year1 = i64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+
+    // Convert to Unix epoch (seconds since 1970-01-01)
+    // Difference between 0001-01-01 and 1970-01-01 is 62135596800 seconds
+    const SECONDS_FROM_YEAR1_TO_UNIX: i64 = 62135596800;
+    let unix_seconds = seconds_since_year1 - SECONDS_FROM_YEAR1_TO_UNIX;
+
+    // Convert to milliseconds
+    Some(unix_seconds * 1000)
+}
+
+/// Simple base64 decoder
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    fn char_to_val(c: u8) -> Option<u8> {
+        ALPHABET.iter().position(|&x| x == c).map(|p| p as u8)
+    }
+
+    let input = input.trim_end_matches('=');
+    let mut output = Vec::new();
+    let bytes = input.as_bytes();
+
+    for chunk in bytes.chunks(4) {
+        let mut buf = 0u32;
+        let mut valid_chars = 0;
+
+        for &c in chunk {
+            if let Some(val) = char_to_val(c) {
+                buf = (buf << 6) | (val as u32);
+                valid_chars += 1;
+            }
+        }
+
+        // Pad the buffer if we have fewer than 4 characters
+        buf <<= 6 * (4 - valid_chars);
+
+        match valid_chars {
+            4 => {
+                output.push((buf >> 16) as u8);
+                output.push((buf >> 8) as u8);
+                output.push(buf as u8);
+            }
+            3 => {
+                output.push((buf >> 16) as u8);
+                output.push((buf >> 8) as u8);
+            }
+            2 => {
+                output.push((buf >> 16) as u8);
+            }
+            _ => return None,
+        }
+    }
+
+    Some(output)
+}
+
+/// Format milliseconds difference as human-readable relative time
+fn format_relative_time(diff_ms: i64) -> String {
+    let seconds = diff_ms / 1000;
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+    let weeks = days / 7;
+    let months = days / 30;
+    let years = days / 365;
+
+    if seconds < 0 {
+        "in the future".to_string()
+    } else if seconds < 60 {
+        "just now".to_string()
+    } else if minutes < 60 {
+        if minutes == 1 {
+            "1 minute ago".to_string()
+        } else {
+            format!("{} minutes ago", minutes)
+        }
+    } else if hours < 24 {
+        if hours == 1 {
+            "1 hour ago".to_string()
+        } else {
+            format!("{} hours ago", hours)
+        }
+    } else if days < 7 {
+        if days == 1 {
+            "yesterday".to_string()
+        } else {
+            format!("{} days ago", days)
+        }
+    } else if weeks < 4 {
+        if weeks == 1 {
+            "1 week ago".to_string()
+        } else {
+            format!("{} weeks ago", weeks)
+        }
+    } else if months < 12 {
+        if months == 1 {
+            "1 month ago".to_string()
+        } else {
+            format!("{} months ago", months)
+        }
+    } else if years == 1 {
+        "1 year ago".to_string()
+    } else {
+        format!("{} years ago", years)
     }
 }

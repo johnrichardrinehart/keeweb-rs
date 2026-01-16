@@ -185,6 +185,19 @@ impl DatabaseSource {
     }
 }
 
+/// A historical version of an entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntryInfo {
+    pub title: String,
+    pub username: String,
+    #[serde(default)]
+    pub password: Option<String>,
+    pub url: String,
+    pub notes: String,
+    /// Last modification time of this history version
+    pub last_modification_time: Option<String>,
+}
+
 /// Entry data for display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryInfo {
@@ -200,6 +213,9 @@ pub struct EntryInfo {
     /// TOTP/OTP configuration (otpauth:// URI or bare secret)
     #[serde(default)]
     pub otp: Option<String>,
+    /// Historical versions of this entry (oldest first)
+    #[serde(default)]
+    pub history: Vec<HistoryEntryInfo>,
 }
 
 /// Group data for display
