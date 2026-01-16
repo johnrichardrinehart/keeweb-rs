@@ -1,0 +1,36 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# WASM build output
+/pkg/
+/crates/keeweb-wasm/pkg/
+/frontend/public/wasm/
+
+# Trunk build output
+/frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Nix
+result
+result-*
+
+# direnv
+.direnv/
+
+# Temporary files
+*.tmp
+*.temp

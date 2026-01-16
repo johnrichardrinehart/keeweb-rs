@@ -1,0 +1,28 @@
+[package]
+name = "kdbx-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Core KeePass database operations library, WASM-compatible"
+
+[dependencies]
+keepass.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["console"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
