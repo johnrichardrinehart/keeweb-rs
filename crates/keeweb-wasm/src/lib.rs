@@ -5,6 +5,7 @@
 
 use kdbx_core::{Database, Entry, EntryBuilder, Group};
 use kdbx_core::{parse_kdbx4_header, compute_composite_key, KdfType};
+use kdbx_core::{TotpConfig, TotpAlgorithm};
 use kdbx_diff::{DatabaseDiff, Merger, Resolution};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -426,6 +427,108 @@ impl WasmDecryptResult {
     }
 }
 
+// ============================================================================
+// TOTP (Time-based One-Time Password) support
+// ============================================================================
+
+/// TOTP code result with metadata
+#[wasm_bindgen]
+pub struct TotpResult {
+    code: String,
+    period: u32,
+    remaining: u32,
+    digits: u32,
+}
+
+#[wasm_bindgen]
+impl TotpResult {
+    /// The generated TOTP code
+    #[wasm_bindgen(getter)]
+    pub fn code(&self) -> String {
+        self.code.clone()
+    }
+
+    /// The time period in seconds
+    #[wasm_bindgen(getter)]
+    pub fn period(&self) -> u32 {
+        self.period
+    }
+
+    /// Seconds remaining until the code changes
+    #[wasm_bindgen(getter)]
+    pub fn remaining(&self) -> u32 {
+        self.remaining
+    }
+
+    /// Number of digits in the code
+    #[wasm_bindgen(getter)]
+    pub fn digits(&self) -> u32 {
+        self.digits
+    }
+}
+
+/// Generate a TOTP code from an OTP configuration string
+///
+/// Accepts:
+/// - otpauth://totp/... URI format (KeePassXC standard)
+/// - Bare base32 secret (uses defaults: SHA1, 6 digits, 30s period)
+///
+/// Returns a TotpResult with the code and metadata, or an error message.
+#[wasm_bindgen(js_name = generateTotp)]
+pub fn generate_totp(otp_value: &str) -> Result<TotpResult, JsValue> {
+    let config = TotpConfig::parse(otp_value)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let code = config.generate()
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(TotpResult {
+        code,
+        period: config.period,
+        remaining: config.time_remaining(),
+        digits: config.digits,
+    })
+}
+
+/// Parse a TOTP configuration and return its details as JSON
+///
+/// Returns JSON with: secret, digits, period, algorithm, issuer, label
+#[wasm_bindgen(js_name = parseTotpConfig)]
+pub fn parse_totp_config(otp_value: &str) -> Result<String, JsValue> {
+    let config = TotpConfig::parse(otp_value)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    #[derive(Serialize)]
+    struct TotpConfigJson {
+        digits: u32,
+        period: u32,
+        algorithm: String,
+        issuer: Option<String>,
+        label: Option<String>,
+    }
+
+    let json = TotpConfigJson {
+        digits: config.digits,
+        period: config.period,
+        algorithm: match config.algorithm {
+            TotpAlgorithm::Sha1 => "SHA1".to_string(),
+            TotpAlgorithm::Sha256 => "SHA256".to_string(),
+            TotpAlgorithm::Sha512 => "SHA512".to_string(),
+        },
+        issuer: config.issuer,
+        label: config.label,
+    };
+
+    serde_json::to_string(&json)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Check if a string looks like a valid TOTP configuration
+#[wasm_bindgen(js_name = isValidTotp)]
+pub fn is_valid_totp(otp_value: &str) -> bool {
+    TotpConfig::parse(otp_value).is_ok()
+}
+
 /// Simple XML parser for KDBX format - extracts entries and groups
 fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
     use std::collections::HashMap;
@@ -447,15 +550,24 @@ fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
     }
 
     // Parse entries
-    for entry_match in find_elements(xml_str, "Entry") {
+    let entry_elements = find_elements(xml_str, "Entry");
+    web_sys::console::log_1(&format!("Found {} Entry elements in XML", entry_elements.len()).into());
+
+    for (i, entry_match) in entry_elements.iter().enumerate() {
+        web_sys::console::log_1(&format!("Entry {}: first 200 chars: {}", i, &entry_match[..entry_match.len().min(200)]).into());
         if let Some(entry) = parse_entry_element(&entry_match) {
+            web_sys::console::log_1(&format!("Parsed entry: {}", entry.title).into());
             entries.push(entry);
+        } else {
+            web_sys::console::log_1(&format!("Entry {} was filtered out (probably History)", i).into());
         }
     }
 
     let entries_json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
     let groups_json = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".to_string());
     let metadata_json = "{}".to_string(); // TODO: parse metadata
+
+    web_sys::console::log_1(&format!("Final: {} entries, {} groups", entries.len(), groups.len()).into());
 
     Ok((entries_json, groups_json, metadata_json))
 }
@@ -495,6 +607,8 @@ struct SimpleEntry {
     url: String,
     notes: String,
     parent_group: Option<String>,
+    /// TOTP/OTP configuration (otpauth:// URI or bare secret)
+    otp: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -507,18 +621,36 @@ struct SimpleGroup {
 
 fn find_elements(xml: &str, tag: &str) -> Vec<String> {
     let mut results = Vec::new();
-    let open_tag = format!("<{}", tag);
+    // Match <tag> or <tag followed by space/attributes
+    let open_tag_exact = format!("<{}>", tag);
+    let open_tag_attr = format!("<{} ", tag);
     let close_tag = format!("</{}>", tag);
 
     let mut search_pos = 0;
-    while let Some(start) = xml[search_pos..].find(&open_tag) {
-        let abs_start = search_pos + start;
-        if let Some(end) = xml[abs_start..].find(&close_tag) {
-            let abs_end = abs_start + end + close_tag.len();
-            results.push(xml[abs_start..abs_end].to_string());
-            search_pos = abs_end;
-        } else {
-            break;
+    while search_pos < xml.len() {
+        // Find either <tag> or <tag with attributes
+        let start_exact = xml[search_pos..].find(&open_tag_exact);
+        let start_attr = xml[search_pos..].find(&open_tag_attr);
+
+        let start = match (start_exact, start_attr) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+
+        match start {
+            Some(rel_start) => {
+                let abs_start = search_pos + rel_start;
+                if let Some(end) = xml[abs_start..].find(&close_tag) {
+                    let abs_end = abs_start + end + close_tag.len();
+                    results.push(xml[abs_start..abs_end].to_string());
+                    search_pos = abs_end;
+                } else {
+                    break;
+                }
+            }
+            None => break,
         }
     }
 
@@ -526,17 +658,24 @@ fn find_elements(xml: &str, tag: &str) -> Vec<String> {
 }
 
 fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
-    // Check if this is a history entry (skip those)
-    if xml.contains("<History>") {
-        return None;
-    }
+    // Extract the part before <History> to avoid parsing history entries' data
+    // Main entries contain a <History> section, but we want to parse the main entry data
+    // History entries are nested inside <History><Entry>...</Entry></History>
+    let xml_to_parse = if let Some(history_pos) = xml.find("<History>") {
+        &xml[..history_pos]
+    } else {
+        xml
+    };
 
-    let uuid = extract_tag_value(xml, "UUID")?;
-    let title = extract_string_value(xml, "Title").unwrap_or_default();
-    let username = extract_string_value(xml, "UserName").unwrap_or_default();
-    let password = extract_string_value(xml, "Password");
-    let url = extract_string_value(xml, "URL").unwrap_or_default();
-    let notes = extract_string_value(xml, "Notes").unwrap_or_default();
+    let uuid = extract_tag_value(xml_to_parse, "UUID")?;
+    let title = extract_string_value(xml_to_parse, "Title").unwrap_or_default();
+    let username = extract_string_value(xml_to_parse, "UserName").unwrap_or_default();
+    let password = extract_string_value(xml_to_parse, "Password");
+    let url = extract_string_value(xml_to_parse, "URL").unwrap_or_default();
+    let notes = extract_string_value(xml_to_parse, "Notes").unwrap_or_default();
+    // KeePassXC stores TOTP config in "otp" field (can also be "TOTP Seed" in some implementations)
+    let otp = extract_string_value(xml_to_parse, "otp")
+        .or_else(|| extract_string_value(xml_to_parse, "TOTP Seed"));
 
     Some(SimpleEntry {
         uuid,
@@ -546,6 +685,7 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         url,
         notes,
         parent_group: None, // TODO: track parent
+        otp,
     })
 }
 

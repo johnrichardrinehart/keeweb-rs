@@ -1,11 +1,15 @@
 //! Entry detail/editor component
 
 use leptos::*;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::password_generator::PasswordGenerator;
 use crate::state::AppState;
 use crate::utils::clipboard;
+
+mod totp;
+use totp::TotpConfig;
 
 /// Entry detail component
 #[component]
@@ -28,6 +32,7 @@ pub fn EntryDetail() -> impl IntoView {
                         let password = e.password.clone().unwrap_or_default();
                         let url = e.url.clone();
                         let notes = e.notes.clone();
+                        let otp = e.otp.clone();
                         let url_for_link = url.clone();
                         let url_is_empty = url.is_empty();
 
@@ -40,6 +45,7 @@ pub fn EntryDetail() -> impl IntoView {
                                 url_for_link=url_for_link
                                 url_is_empty=url_is_empty
                                 notes=notes
+                                otp=otp
                                 show_password=show_password
                                 show_generator=show_generator
                                 copied_field=copied_field
@@ -62,6 +68,7 @@ fn EntryDetailContent(
     url_for_link: String,
     url_is_empty: bool,
     notes: String,
+    otp: Option<String>,
     show_password: RwSignal<bool>,
     show_generator: RwSignal<bool>,
     copied_field: RwSignal<Option<String>>,
@@ -191,6 +198,13 @@ fn EntryDetailContent(
                 </div>
             </div>
 
+            // TOTP field (only shown if entry has OTP configured)
+            {if let Some(otp_value) = otp.clone() {
+                view! { <TotpField otp_value=otp_value copied_field=copied_field /> }.into_view()
+            } else {
+                view! { <span></span> }.into_view()
+            }}
+
             // URL field
             <div class="field-group">
                 <label>"URL"</label>
@@ -300,5 +314,161 @@ fn GenerateIcon() -> impl IntoView {
         <svg viewBox="0 0 24 24" width="18" height="18">
             <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
         </svg>
+    }
+}
+
+/// TOTP/Authenticator icon
+#[component]
+fn TotpIcon() -> impl IntoView {
+    view! {
+        <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>
+    }
+}
+
+/// TOTP field component
+#[component]
+fn TotpField(
+    otp_value: String,
+    copied_field: RwSignal<Option<String>>,
+) -> impl IntoView {
+    // Signal for the current TOTP code
+    let totp_code = create_rw_signal(String::new());
+    let totp_remaining = create_rw_signal(0u32);
+    let totp_period = create_rw_signal(30u32);
+    let totp_error = create_rw_signal(Option::<String>::None);
+
+    let otp_for_generate = otp_value.clone();
+
+    // Function to generate TOTP
+    let generate = move || {
+        match TotpConfig::parse(&otp_for_generate) {
+            Ok(config) => {
+                match config.generate() {
+                    Ok(result) => {
+                        totp_code.set(result.code);
+                        totp_remaining.set(result.remaining);
+                        totp_period.set(result.period);
+                        totp_error.set(None);
+                    }
+                    Err(e) => {
+                        totp_error.set(Some(e));
+                    }
+                }
+            }
+            Err(e) => {
+                totp_error.set(Some(e));
+            }
+        }
+    };
+
+    // Generate initial code
+    generate();
+
+    // Set up interval to refresh the code
+    let otp_for_interval = otp_value.clone();
+    create_effect(move |_| {
+        let otp = otp_for_interval.clone();
+        let code_signal = totp_code;
+        let remaining_signal = totp_remaining;
+        let period_signal = totp_period;
+        let error_signal = totp_error;
+
+        // Update every second
+        let handle = set_interval_with_handle(
+            move || {
+                match TotpConfig::parse(&otp) {
+                    Ok(config) => {
+                        match config.generate() {
+                            Ok(result) => {
+                                code_signal.set(result.code);
+                                remaining_signal.set(result.remaining);
+                                period_signal.set(result.period);
+                                error_signal.set(None);
+                            }
+                            Err(e) => {
+                                error_signal.set(Some(e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error_signal.set(Some(e));
+                    }
+                }
+            },
+            std::time::Duration::from_secs(1),
+        );
+
+        // Cleanup on unmount
+        on_cleanup(move || {
+            if let Ok(h) = handle {
+                h.clear();
+            }
+        });
+    });
+
+    // Copy handler
+    let copy_totp = move |_| {
+        let code = totp_code.get();
+        let copied = copied_field;
+        spawn_local(async move {
+            if clipboard::copy_to_clipboard(&code).await.is_ok() {
+                copied.set(Some("totp".to_string()));
+                set_timeout(move || copied.set(None), std::time::Duration::from_secs(2));
+            }
+        });
+    };
+
+    view! {
+        <div class="field-group totp-field">
+            <label>"TOTP"</label>
+            <div class="field-value-row">
+                {move || {
+                    if let Some(error) = totp_error.get() {
+                        view! {
+                            <span class="totp-error">{error}</span>
+                        }.into_view()
+                    } else {
+                        let code = totp_code.get();
+                        let remaining = totp_remaining.get();
+                        let period = totp_period.get();
+                        let progress = (remaining as f64 / period as f64) * 100.0;
+
+                        view! {
+                            <div class="totp-display">
+                                <span class="totp-code">{code}</span>
+                                <div class="totp-timer">
+                                    <svg viewBox="0 0 36 36" class="totp-progress-ring">
+                                        <path
+                                            class="totp-progress-bg"
+                                            d="M18 2.0845
+                                               a 15.9155 15.9155 0 0 1 0 31.831
+                                               a 15.9155 15.9155 0 0 1 0 -31.831"
+                                        />
+                                        <path
+                                            class="totp-progress-bar"
+                                            stroke-dasharray=move || format!("{}, 100", progress)
+                                            d="M18 2.0845
+                                               a 15.9155 15.9155 0 0 1 0 31.831
+                                               a 15.9155 15.9155 0 0 1 0 -31.831"
+                                        />
+                                        <text x="18" y="21" class="totp-timer-text">{remaining}</text>
+                                    </svg>
+                                </div>
+                            </div>
+                        }.into_view()
+                    }
+                }}
+                <button
+                    class="btn-icon"
+                    class:copied=move || copied_field.get() == Some("totp".to_string())
+                    on:click=copy_totp
+                    title="Copy TOTP code"
+                >
+                    <CopyIcon />
+                </button>
+            </div>
+        </div>
     }
 }

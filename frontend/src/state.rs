@@ -197,6 +197,9 @@ pub struct EntryInfo {
     pub notes: String,
     #[serde(rename = "parent_group")]
     pub group_uuid: Option<String>,
+    /// TOTP/OTP configuration (otpauth:// URI or bare secret)
+    #[serde(default)]
+    pub otp: Option<String>,
 }
 
 /// Group data for display

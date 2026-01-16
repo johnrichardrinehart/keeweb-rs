@@ -18,8 +18,10 @@ getrandom.workspace = true
 
 # For custom KDBX4 decryption with external KDF
 byteorder = "1"
+sha1 = "0.10"
 sha2 = "0.10"
 hmac = "0.12"
+digest = "0.10"
 aes = "0.8"
 cbc = "0.1"
 cipher = "0.4"
