@@ -1,5 +1,6 @@
 //! Application state management
 
+use crate::argon2_client::Argon2Client;
 use crate::worker_client::WorkerClient;
 use keeweb_wasm::WasmDatabase;
 use leptos::*;
@@ -7,9 +8,11 @@ use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-// Thread-local worker client (WASM is single-threaded)
+// Thread-local clients (WASM is single-threaded)
 thread_local! {
     static WORKER_CLIENT: RefCell<Option<WorkerClient>> = const { RefCell::new(None) };
+    static ARGON2_CLIENT: RefCell<Option<Argon2Client>> = const { RefCell::new(None) };
+    static ARGON2_READY: RefCell<bool> = const { RefCell::new(false) };
 }
 
 /// Get or initialize the worker client
@@ -31,7 +34,102 @@ fn get_worker_client() -> Result<(), String> {
     })
 }
 
-/// Send unlock request to worker
+/// Get or initialize the argon2 client
+fn get_argon2_client() -> Result<(), String> {
+    ARGON2_CLIENT.with(|client| {
+        let mut client = client.borrow_mut();
+        if client.is_none() {
+            log::debug!("Initializing argon2-pthread client");
+            match Argon2Client::new() {
+                Ok(ac) => {
+                    *client = Some(ac);
+                    Ok(())
+                }
+                Err(e) => Err(format!("Failed to create argon2 client: {:?}", e)),
+            }
+        } else {
+            Ok(())
+        }
+    })
+}
+
+/// Initialize argon2 worker (call once at startup)
+pub fn init_argon2<F>(callback: F)
+where
+    F: FnOnce(Result<(), String>) + 'static,
+{
+    if let Err(e) = get_argon2_client() {
+        callback(Err(e));
+        return;
+    }
+
+    ARGON2_CLIENT.with(|client| {
+        if let Some(ref ac) = *client.borrow() {
+            ac.init(move |result| {
+                if result.is_ok() {
+                    ARGON2_READY.with(|ready| *ready.borrow_mut() = true);
+                    log::info!("Argon2-pthread initialized (SIMD + threads)");
+                }
+                callback(result);
+            });
+        }
+    });
+}
+
+/// Check if argon2 is ready
+pub fn is_argon2_ready() -> bool {
+    ARGON2_READY.with(|ready| *ready.borrow())
+}
+
+/// Run argon2 hash with parallel threads
+pub fn argon2_hash<F>(
+    argon2_type: String,
+    password: Vec<u8>,
+    salt: Vec<u8>,
+    time_cost: u32,
+    memory_cost: u32,
+    threads: u32,
+    hash_len: u32,
+    callback: F,
+) where
+    F: FnOnce(Result<Vec<u8>, String>) + 'static,
+{
+    ARGON2_CLIENT.with(|client| {
+        if let Some(ref ac) = *client.borrow() {
+            ac.hash(
+                &argon2_type,
+                password,
+                salt,
+                time_cost,
+                memory_cost,
+                threads,
+                hash_len,
+                callback,
+            );
+        } else {
+            callback(Err("Argon2 client not initialized".to_string()));
+        }
+    });
+}
+
+/// Send unlock request to worker (for decryption only, not KDF)
+pub fn worker_decrypt<F>(data: Vec<u8>, password: String, derived_key: Vec<u8>, callback: F)
+where
+    F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
+{
+    if let Err(e) = get_worker_client() {
+        callback(Err(e));
+        return;
+    }
+
+    WORKER_CLIENT.with(|client| {
+        if let Some(ref wc) = *client.borrow() {
+            wc.decrypt_with_key(data, password, derived_key, callback);
+        }
+    });
+}
+
+/// Send unlock request to worker (legacy - does full KDF internally)
 pub fn worker_unlock<F>(data: Vec<u8>, password: String, callback: F)
 where
     F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
@@ -215,8 +313,8 @@ impl AppState {
         }
     }
 
-    /// Attempt to unlock the database using Web Worker (non-blocking)
-    /// This is preferred for databases with heavy KDF settings (high Argon2 memory/iterations)
+    /// Attempt to unlock the database using parallel Argon2 + Worker decryption
+    /// This uses multi-threaded Argon2 via SharedArrayBuffer for best performance
     pub fn unlock_database_async(
         &self,
         password: &str,
@@ -236,46 +334,164 @@ impl AppState {
         };
 
         log::debug!("Got pending file data, {} bytes", data.len());
-        log::debug!("Sending to worker for unlock (Argon2 will run in background)...");
 
         let state = *self;
-        let password = password.to_string();
+        let password_str = password.to_string();
+        let data_clone = data.clone();
 
-        worker_unlock(data, password, move |result| {
-            // The callback runs outside Leptos context
-            // Use wasm_bindgen_futures to schedule the update in a microtask
-            // which will run in the proper context
-            wasm_bindgen_futures::spawn_local(async move {
-                match result {
-                    Ok(unlock_result) => {
-                        log::debug!("Worker unlock successful");
+        // Check if parallel argon2 is available
+        if is_argon2_ready() {
+            log::debug!("Using parallel Argon2 (SIMD + threads)...");
 
-                        // Parse entries and groups from JSON
-                        let entries: Vec<EntryInfo> =
-                            serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
-                        let groups: Vec<GroupInfo> =
-                            serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+            // Step 1: Extract KDF parameters from KDBX header
+            let start_time = web_sys::window()
+                .and_then(|w| w.performance())
+                .map(|p| p.now())
+                .unwrap_or(0.0);
 
-                        log::debug!("Parsed {} entries and {} groups", entries.len(), groups.len());
-
-                        // Update state - spawn_local should provide proper context
-                        state.database.set(None);
-                        state.entries.set(entries);
-                        state.groups.set(groups);
-                        state.pending_file_data.set(None);
-                        state.error_message.set(None);
-                        state.current_view.set(AppView::Database);
-
-                        log::info!("Database unlocked successfully via worker");
-                    }
-                    Err(e) => {
-                        log::error!("Worker unlock failed: {}", e);
-                        error_signal.set(Some(e));
-                        is_unlocking.set(false);
-                    }
+            let kdf_params = match keeweb_wasm::get_kdf_params(&data, &password_str) {
+                Ok(params) => params,
+                Err(e) => {
+                    let err = e.as_string().unwrap_or_else(|| format!("{:?}", e));
+                    log::error!("Failed to extract KDF params: {}", err);
+                    error_signal.set(Some(err));
+                    is_unlocking.set(false);
+                    return;
                 }
+            };
+
+            log::debug!(
+                "KDF: {} mem={}KB iter={} parallel={}",
+                kdf_params.kdf_type(),
+                kdf_params.memory_kb(),
+                kdf_params.iterations(),
+                kdf_params.parallelism()
+            );
+
+            // Step 2: Run Argon2 with parallel threads
+            let argon2_type = kdf_params.kdf_type();
+            let composite_key = kdf_params.composite_key();
+            let salt = kdf_params.salt();
+            let iterations = kdf_params.iterations() as u32;
+            let memory_kb = kdf_params.memory_kb() as u32;
+            let parallelism = kdf_params.parallelism();
+
+            log::debug!("Running parallel Argon2 with {} threads...", parallelism);
+
+            argon2_hash(
+                argon2_type,
+                composite_key,
+                salt,
+                iterations,
+                memory_kb,
+                parallelism,
+                32,
+                move |argon2_result| {
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match argon2_result {
+                            Ok(derived_key) => {
+                                let argon2_time = web_sys::window()
+                                    .and_then(|w| w.performance())
+                                    .map(|p| p.now() - start_time)
+                                    .unwrap_or(0.0);
+                                log::info!("Parallel Argon2 completed in {:.0}ms", argon2_time);
+
+                                // Step 3: Decrypt with the derived key in worker
+                                log::debug!("Decrypting database with derived key...");
+                                worker_decrypt(data_clone, password_str, derived_key, move |result| {
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        match result {
+                                            Ok(unlock_result) => {
+                                                log::debug!("Decryption successful");
+
+                                                let entries: Vec<EntryInfo> =
+                                                    serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
+                                                let groups: Vec<GroupInfo> =
+                                                    serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+
+                                                log::debug!("Parsed {} entries and {} groups", entries.len(), groups.len());
+
+                                                state.database.set(None);
+                                                state.entries.set(entries);
+                                                state.groups.set(groups);
+                                                state.pending_file_data.set(None);
+                                                state.error_message.set(None);
+                                                state.current_view.set(AppView::Database);
+
+                                                log::info!("Database unlocked successfully (parallel)");
+                                            }
+                                            Err(e) => {
+                                                log::error!("Decryption failed: {}", e);
+                                                error_signal.set(Some(e));
+                                                is_unlocking.set(false);
+                                            }
+                                        }
+                                    });
+                                });
+                            }
+                            Err(e) => {
+                                log::error!("Parallel Argon2 failed: {}", e);
+                                log::debug!("Falling back to single-threaded unlock...");
+                                // Fall back to worker-based unlock
+                                worker_unlock(data_clone, password_str, move |result| {
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        match result {
+                                            Ok(unlock_result) => {
+                                                let entries: Vec<EntryInfo> =
+                                                    serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
+                                                let groups: Vec<GroupInfo> =
+                                                    serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+
+                                                state.database.set(None);
+                                                state.entries.set(entries);
+                                                state.groups.set(groups);
+                                                state.pending_file_data.set(None);
+                                                state.error_message.set(None);
+                                                state.current_view.set(AppView::Database);
+
+                                                log::info!("Database unlocked (fallback)");
+                                            }
+                                            Err(e) => {
+                                                error_signal.set(Some(e));
+                                                is_unlocking.set(false);
+                                            }
+                                        }
+                                    });
+                                });
+                            }
+                        }
+                    });
+                },
+            );
+        } else {
+            // Argon2 not ready, use legacy worker unlock
+            log::debug!("Parallel Argon2 not ready, using worker unlock...");
+            worker_unlock(data, password_str, move |result| {
+                wasm_bindgen_futures::spawn_local(async move {
+                    match result {
+                        Ok(unlock_result) => {
+                            let entries: Vec<EntryInfo> =
+                                serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
+                            let groups: Vec<GroupInfo> =
+                                serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+
+                            state.database.set(None);
+                            state.entries.set(entries);
+                            state.groups.set(groups);
+                            state.pending_file_data.set(None);
+                            state.error_message.set(None);
+                            state.current_view.set(AppView::Database);
+
+                            log::info!("Database unlocked via worker");
+                        }
+                        Err(e) => {
+                            error_signal.set(Some(e));
+                            is_unlocking.set(false);
+                        }
+                    }
+                });
             });
-        });
+        }
     }
 
     /// Close the current database

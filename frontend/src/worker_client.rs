@@ -28,36 +28,141 @@ pub struct WorkerClient {
 
 /// Generate worker script that can load WASM dynamically
 fn create_worker_script() -> String {
-    // The worker script as a string - loads the standalone keeweb-wasm module (no Leptos/DOM dependencies)
+    // The worker script as a string - loads keeweb-wasm and uses @very-amused/argon2-wasm for pthread support
+    // Uses dynamic import() for ES modules since we're a module worker
     r#"
 // Web Worker for KeeWeb-RS database operations
+// Uses @very-amused/argon2-wasm with pthread support for fast parallel key derivation
+
 let wasmModule = null;
+let argon2Worker = null;
+let argon2Ready = false;
+let getKdfParams = null;
+let decryptWithDerivedKey = null;
 let WasmDatabase = null;
 
-// Initialize the WASM module
-async function initWasm() {
+// Message ID counter for argon2 worker
+let argon2MsgId = 0;
+let argon2Pending = new Map();
+
+// Argon2 Methods enum (from @very-amused/argon2-wasm)
+const Argon2Methods = {
+    LoadArgon2: 0,
+    Hash2i: 1,
+    Hash2d: 2,
+    Hash2id: 3,
+    Unload: 4
+};
+
+// Initialize argon2 worker with pthread support
+async function initArgon2Worker(baseUrl) {
+    return new Promise((resolve, reject) => {
+        const workerUrl = baseUrl + '/argon2-pthread/build/worker.min.js';
+        console.log('[Worker] Loading argon2-pthread worker from:', workerUrl);
+
+        argon2Worker = new Worker(workerUrl);
+
+        argon2Worker.onmessage = (event) => {
+            const { id, code, body } = event.data;
+            const pending = argon2Pending.get(id);
+            if (pending) {
+                argon2Pending.delete(id);
+                if (code === 0) {
+                    pending.resolve(body);
+                } else {
+                    pending.reject(new Error('Argon2 error code: ' + code));
+                }
+            }
+        };
+
+        argon2Worker.onerror = (e) => {
+            console.error('[Worker] Argon2 worker error:', e);
+            reject(e);
+        };
+
+        // Load argon2 WASM with SIMD and pthread support
+        const loadId = argon2MsgId++;
+        argon2Pending.set(loadId, { resolve, reject });
+
+        argon2Worker.postMessage({
+            id: loadId,
+            method: Argon2Methods.LoadArgon2,
+            params: {
+                wasmRoot: baseUrl + '/argon2-pthread/build',
+                simd: true,
+                pthread: true
+            }
+        });
+    });
+}
+
+// Run argon2 hash via the pthread worker
+async function runArgon2(type, password, salt, timeCost, memoryCost, threads, hashLen) {
+    return new Promise((resolve, reject) => {
+        const id = argon2MsgId++;
+        argon2Pending.set(id, { resolve, reject });
+
+        // Select method based on type (0=2d, 2=2id)
+        const method = type === 0 ? Argon2Methods.Hash2d : Argon2Methods.Hash2id;
+
+        argon2Worker.postMessage({
+            id,
+            method,
+            params: {
+                password,
+                salt,
+                timeCost,
+                memoryCost,
+                threads,
+                hashLen
+            }
+        });
+    });
+}
+
+// Initialize keeweb-wasm only (for decrypt_with_key)
+async function initKeewebWasm() {
     if (wasmModule) return;
 
-    try {
-        const baseUrl = self.location.origin;
+    const baseUrl = self.location.origin;
 
-        // Load the standalone keeweb-wasm module (built separately with wasm-pack)
-        // This module has no DOM dependencies and can run in a worker
+    try {
         const jsUrl = baseUrl + '/wasm/keeweb_wasm.js';
         const wasmUrl = baseUrl + '/wasm/keeweb_wasm_bg.wasm';
-
         console.log('[Worker] Loading keeweb-wasm from:', jsUrl);
 
-        // Dynamic import for ES modules in worker
         const module = await import(jsUrl);
-
-        // Initialize WASM with the wasm file path
         wasmModule = await module.default(wasmUrl);
 
+        getKdfParams = module.getKdfParams;
+        decryptWithDerivedKey = module.decryptWithDerivedKey;
         WasmDatabase = module.WasmDatabase;
-        console.log('[Worker] WASM module initialized successfully');
+        console.log('[Worker] keeweb-wasm loaded');
     } catch (e) {
-        console.error('[Worker] Failed to initialize WASM:', e);
+        console.error('[Worker] Failed to load keeweb-wasm:', e);
+        throw e;
+    }
+}
+
+// Initialize WASM modules including argon2 (for unlock_fast)
+async function initWasm() {
+    if (wasmModule && argon2Ready) return;
+
+    const baseUrl = self.location.origin;
+
+    try {
+        // Load keeweb-wasm first
+        await initKeewebWasm();
+
+        // Load argon2 pthread worker
+        if (!argon2Ready) {
+            console.log('[Worker] Loading argon2-pthread with SIMD and threading...');
+            await initArgon2Worker(baseUrl);
+            argon2Ready = true;
+            console.log('[Worker] argon2-pthread loaded (SIMD + pthreads enabled)');
+        }
+    } catch (e) {
+        console.error('[Worker] Failed to initialize:', e);
         throw e;
     }
 }
@@ -68,11 +173,21 @@ self.onmessage = async function(event) {
     console.log('[Worker] Received message:', type, 'id:', id);
 
     try {
-        await initWasm();
-
         switch (type) {
             case 'unlock':
+                // Standard unlock - needs keeweb-wasm only
+                await initKeewebWasm();
                 await handleUnlock(id, payload);
+                break;
+            case 'unlock_fast':
+                // Fast unlock - needs both keeweb-wasm and argon2
+                await initWasm();
+                await handleUnlockFast(id, payload);
+                break;
+            case 'decrypt_with_key':
+                // Decrypt with pre-computed key - only needs keeweb-wasm
+                await initKeewebWasm();
+                await handleDecryptWithKey(id, payload);
                 break;
             default:
                 self.postMessage({
@@ -91,14 +206,88 @@ self.onmessage = async function(event) {
     }
 };
 
-// Handle database unlock request
+// Fast unlock using argon2-pthread with SIMD and multi-threading
+async function handleUnlockFast(id, { data, password }) {
+    console.log('[Worker] Starting FAST unlock (argon2-pthread SIMD+threads), data size:', data.length);
+
+    try {
+        // Verify argon2 worker is ready
+        if (!argon2Ready) {
+            throw new Error('Argon2 worker not ready');
+        }
+
+        const dataArray = data instanceof Uint8Array ? data : new Uint8Array(data);
+        const totalStart = performance.now();
+
+        // Step 1: Extract KDF parameters from KDBX header
+        console.log('[Worker] Extracting KDF parameters...');
+        const kdfStart = performance.now();
+        const kdfParams = getKdfParams(dataArray, password);
+        console.log('[Worker] KDF params extracted in', (performance.now() - kdfStart).toFixed(0), 'ms');
+        console.log('[Worker] KDF:', kdfParams.kdfType, 'mem:', kdfParams.memoryKb, 'KB, iter:', kdfParams.iterations, ', parallel:', kdfParams.parallelism);
+
+        // Step 2: Run Argon2 with SIMD and pthreads
+        console.log('[Worker] Running Argon2 with', kdfParams.parallelism, 'threads (SIMD+pthread)...');
+        const argon2Start = performance.now();
+
+        // argon2 type values: 0=Argon2d, 2=Argon2id
+        const argon2Type = kdfParams.kdfType === 'argon2d' ? 0 : 2;
+        console.log('[Worker] Argon2 type:', argon2Type, '(0=d, 2=id)');
+
+        // Get composite key and salt
+        const compositeKey = new Uint8Array(kdfParams.compositeKey);
+        const salt = new Uint8Array(kdfParams.salt);
+
+        // Run argon2 via the pthread worker
+        const hash = await runArgon2(
+            argon2Type,
+            compositeKey,           // password (composite key)
+            salt,                   // salt
+            Number(kdfParams.iterations),   // timeCost
+            Number(kdfParams.memoryKb),     // memoryCost in KB
+            kdfParams.parallelism,          // threads
+            32                              // hashLen
+        );
+
+        const argon2Result = { hash: new Uint8Array(hash) };
+
+        const argon2Elapsed = performance.now() - argon2Start;
+        console.log('[Worker] Argon2 SIMD completed in', argon2Elapsed.toFixed(0), 'ms');
+
+        // Step 3: Decrypt database with derived key
+        console.log('[Worker] Decrypting database...');
+        const decryptStart = performance.now();
+        const decryptResult = decryptWithDerivedKey(dataArray, password, argon2Result.hash);
+        console.log('[Worker] Decryption completed in', (performance.now() - decryptStart).toFixed(0), 'ms');
+
+        const totalElapsed = performance.now() - totalStart;
+        console.log('[Worker] FAST unlock total:', totalElapsed.toFixed(0), 'ms');
+
+        self.postMessage({
+            id,
+            type: 'unlock_success',
+            result: {
+                entriesJson: decryptResult.entriesJson,
+                groupsJson: decryptResult.groupsJson,
+                metadataJson: decryptResult.metadataJson,
+            }
+        });
+    } catch (e) {
+        console.error('[Worker] Fast unlock failed:', e);
+        console.log('[Worker] Falling back to standard unlock...');
+        // Fall back to standard unlock
+        await handleUnlock(id, { data, password });
+    }
+}
+
+// Standard unlock (fallback, uses rust-argon2)
 async function handleUnlock(id, { data, password }) {
-    console.log('[Worker] Starting unlock, data size:', data.length);
+    console.log('[Worker] Starting STANDARD unlock, data size:', data.length);
 
     try {
         const dataArray = data instanceof Uint8Array ? data : new Uint8Array(data);
 
-        console.log('[Worker] Opening database (Argon2 key derivation in progress)...');
+        console.log('[Worker] Opening database (rust-argon2)...');
         const startTime = performance.now();
 
         const db = new WasmDatabase(dataArray, password);
@@ -131,7 +320,42 @@ async function handleUnlock(id, { data, password }) {
     }
 }
 
-console.log('[Worker] Worker script loaded');
+// Decrypt with pre-computed key (from main thread parallel argon2)
+async function handleDecryptWithKey(id, { data, password, derivedKey }) {
+    console.log('[Worker] Decrypting with pre-computed key, data size:', data.length, 'key size:', derivedKey.length);
+
+    try {
+        const dataArray = data instanceof Uint8Array ? data : new Uint8Array(data);
+        const keyArray = derivedKey instanceof Uint8Array ? derivedKey : new Uint8Array(derivedKey);
+
+        const startTime = performance.now();
+
+        // Use the decryptWithDerivedKey function from keeweb-wasm
+        const decryptResult = decryptWithDerivedKey(dataArray, password, keyArray);
+
+        const elapsed = performance.now() - startTime;
+        console.log('[Worker] Decryption completed in', elapsed.toFixed(0), 'ms');
+
+        self.postMessage({
+            id,
+            type: 'unlock_success',
+            result: {
+                entriesJson: decryptResult.entriesJson,
+                groupsJson: decryptResult.groupsJson,
+                metadataJson: decryptResult.metadataJson,
+            }
+        });
+    } catch (e) {
+        console.error('[Worker] Decrypt with key failed:', e);
+        self.postMessage({
+            id,
+            type: 'unlock_error',
+            error: e.toString()
+        });
+    }
+}
+
+console.log('[Worker] Worker script loaded (with parallel argon2 support)');
 "#.to_string()
 }
 
@@ -263,9 +487,9 @@ impl WorkerClient {
             .borrow_mut()
             .insert(id, Box::new(callback));
 
-        // Create the message object
+        // Create the message object - use unlock_fast for argon2-browser SIMD
         let message = Object::new();
-        Reflect::set(&message, &"type".into(), &"unlock".into()).unwrap();
+        Reflect::set(&message, &"type".into(), &"unlock_fast".into()).unwrap();
         Reflect::set(&message, &"id".into(), &JsValue::from_f64(id as f64)).unwrap();
 
         // Create payload with data and password
@@ -286,6 +510,55 @@ impl WorkerClient {
         if let Err(e) = self.worker.post_message_with_transfer(&message, &transfer) {
             log::error!("Failed to post message to worker: {:?}", e);
             // Call the callback with error
+            if let Some(callback) = self.pending_requests.borrow_mut().remove(&id) {
+                callback(Err(format!("Failed to send to worker: {:?}", e)));
+            }
+        }
+    }
+
+    /// Decrypt database with a pre-computed derived key (from parallel argon2)
+    pub fn decrypt_with_key<F>(&self, data: Vec<u8>, password: String, derived_key: Vec<u8>, callback: F)
+    where
+        F: FnOnce(Result<UnlockResult, String>) + 'static,
+    {
+        let id = {
+            let mut next = self.next_id.borrow_mut();
+            let id = *next;
+            *next += 1;
+            id
+        };
+
+        log::debug!("Sending decrypt_with_key request, id={}, data_len={}, key_len={}", id, data.len(), derived_key.len());
+
+        // Store the callback
+        self.pending_requests
+            .borrow_mut()
+            .insert(id, Box::new(callback));
+
+        // Create the message object
+        let message = Object::new();
+        Reflect::set(&message, &"type".into(), &"decrypt_with_key".into()).unwrap();
+        Reflect::set(&message, &"id".into(), &JsValue::from_f64(id as f64)).unwrap();
+
+        // Create payload
+        let payload = Object::new();
+
+        let data_array = Uint8Array::from(data.as_slice());
+        Reflect::set(&payload, &"data".into(), &data_array).unwrap();
+        Reflect::set(&payload, &"password".into(), &password.into()).unwrap();
+
+        let key_array = Uint8Array::from(derived_key.as_slice());
+        Reflect::set(&payload, &"derivedKey".into(), &key_array).unwrap();
+
+        Reflect::set(&message, &"payload".into(), &payload).unwrap();
+
+        // Create transfer array
+        let transfer = Array::new();
+        transfer.push(&data_array.buffer());
+        transfer.push(&key_array.buffer());
+
+        if let Err(e) = self.worker.post_message_with_transfer(&message, &transfer) {
+            log::error!("Failed to post decrypt message to worker: {:?}", e);
             if let Some(callback) = self.pending_requests.borrow_mut().remove(&id) {
                 callback(Err(format!("Failed to send to worker: {:?}", e)));
             }

@@ -60,6 +60,7 @@ web-sys = { version = "0.3", features = [
     "ErrorEvent",
     "Blob",
     "BlobPropertyBag",
+    "Performance",
 ] }
 
 # Note: File::array_buffer() requires no extra features, it's part of the base File API

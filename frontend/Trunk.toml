@@ -10,3 +10,5 @@ ignore = ["dist"]
 address = "127.0.0.1"
 port = 8080
 open = false
+# Headers required for SharedArrayBuffer (needed for multi-threaded WASM)
+headers = { "Cross-Origin-Opener-Policy" = "same-origin", "Cross-Origin-Embedder-Policy" = "require-corp" }

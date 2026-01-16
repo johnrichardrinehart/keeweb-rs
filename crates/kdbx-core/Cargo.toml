@@ -16,6 +16,17 @@ chrono.workspace = true
 zeroize.workspace = true
 getrandom.workspace = true
 
+# For custom KDBX4 decryption with external KDF
+byteorder = "1"
+sha2 = "0.10"
+hmac = "0.12"
+aes = "0.8"
+cbc = "0.1"
+cipher = "0.4"
+flate2 = "1"
+chacha20 = "0.9"
+base64 = "0.22"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
 js-sys.workspace = true

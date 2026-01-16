@@ -6,7 +6,7 @@ use crate::components::{
     entry_detail::EntryDetail, entry_list::EntryList, file_picker::FilePicker, sidebar::Sidebar,
     unlock_dialog::UnlockDialog,
 };
-use crate::state::{AppState, AppView};
+use crate::state::{init_argon2, AppState, AppView};
 
 /// Root application component
 #[component]
@@ -14,6 +14,14 @@ pub fn App() -> impl IntoView {
     // Create the global application state
     let state = AppState::new();
     provide_context(state);
+
+    // Initialize argon2-pthread worker in background (for parallel KDF)
+    init_argon2(|result| {
+        match result {
+            Ok(()) => log::info!("Argon2-pthread initialized (parallel KDF ready)"),
+            Err(e) => log::warn!("Argon2-pthread init failed: {} (will use fallback)", e),
+        }
+    });
 
     view! {
         <div class="app">

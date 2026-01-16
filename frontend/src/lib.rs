@@ -3,6 +3,7 @@
 //! A Leptos-based web frontend for the KeeWeb-RS password manager.
 
 mod app;
+mod argon2_client;
 mod components;
 mod state;
 mod utils;

@@ -51,6 +51,14 @@ pub enum Error {
     /// The database format is not supported
     #[error("Unsupported database format: {0}")]
     UnsupportedFormat(String),
+
+    /// Error parsing KDBX file
+    #[error("Parse error: {0}")]
+    ParseError(String),
+
+    /// Decryption error
+    #[error("Decryption error: {0}")]
+    DecryptError(String),
 }
 
 impl From<std::io::Error> for Error {
