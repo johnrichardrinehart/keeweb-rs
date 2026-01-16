@@ -42,4 +42,5 @@ tower-http = { version = "0.5", features = ["cors", "fs"] }
 
 [profile.release]
 lto = true
-opt-level = "z"  # Optimize for size (good for WASM)
+opt-level = 3    # Optimize for speed (important for Argon2 KDF)
+codegen-units = 1  # Better optimization at cost of compile time
