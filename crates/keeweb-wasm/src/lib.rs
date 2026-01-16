@@ -549,17 +549,13 @@ fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
         }
     }
 
-    // Parse entries
-    let entry_elements = find_elements(xml_str, "Entry");
-    web_sys::console::log_1(&format!("Found {} Entry elements in XML", entry_elements.len()).into());
+    // Parse entries - strip History sections first to avoid parsing old entry versions
+    let xml_without_history = remove_history_sections(xml_str);
+    let entry_elements = find_elements(&xml_without_history, "Entry");
 
-    for (i, entry_match) in entry_elements.iter().enumerate() {
-        web_sys::console::log_1(&format!("Entry {}: first 200 chars: {}", i, &entry_match[..entry_match.len().min(200)]).into());
+    for entry_match in entry_elements.iter() {
         if let Some(entry) = parse_entry_element(&entry_match) {
-            web_sys::console::log_1(&format!("Parsed entry: {}", entry.title).into());
             entries.push(entry);
-        } else {
-            web_sys::console::log_1(&format!("Entry {} was filtered out (probably History)", i).into());
         }
     }
 
@@ -617,6 +613,36 @@ struct SimpleGroup {
     name: String,
     parent: Option<String>,
     icon_id: Option<u32>,
+}
+
+/// Remove all <History>...</History> sections from XML to avoid parsing old entry versions
+fn remove_history_sections(xml: &str) -> String {
+    let mut result = String::with_capacity(xml.len());
+    let mut pos = 0;
+
+    while pos < xml.len() {
+        if let Some(history_start) = xml[pos..].find("<History>") {
+            // Copy everything before <History>
+            result.push_str(&xml[pos..pos + history_start]);
+
+            // Find the matching </History>
+            let search_start = pos + history_start;
+            if let Some(history_end) = xml[search_start..].find("</History>") {
+                // Skip past </History>
+                pos = search_start + history_end + "</History>".len();
+            } else {
+                // No closing tag found, copy the rest
+                result.push_str(&xml[pos + history_start..]);
+                break;
+            }
+        } else {
+            // No more History sections, copy the rest
+            result.push_str(&xml[pos..]);
+            break;
+        }
+    }
+
+    result
 }
 
 fn find_elements(xml: &str, tag: &str) -> Vec<String> {
