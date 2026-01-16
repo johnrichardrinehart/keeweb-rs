@@ -129,7 +129,7 @@ where
     });
 }
 
-/// Send unlock request to worker (legacy - does full KDF internally)
+/// Send unlock request to worker (uses fast parallel argon2)
 pub fn worker_unlock<F>(data: Vec<u8>, password: String, callback: F)
 where
     F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
@@ -142,6 +142,24 @@ where
     WORKER_CLIENT.with(|client| {
         if let Some(ref wc) = *client.borrow() {
             wc.unlock(data, password, callback);
+        }
+    });
+}
+
+/// Send unlock request to worker using standard single-threaded Rust argon2
+/// Use this for high-memory databases where parallel argon2 may fail
+pub fn worker_unlock_standard<F>(data: Vec<u8>, password: String, callback: F)
+where
+    F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
+{
+    if let Err(e) = get_worker_client() {
+        callback(Err(e));
+        return;
+    }
+
+    WORKER_CLIENT.with(|client| {
+        if let Some(ref wc) = *client.borrow() {
+            wc.unlock_standard(data, password, callback);
         }
     });
 }
@@ -379,13 +397,65 @@ impl AppState {
                 }
             };
 
-            log::debug!(
-                "KDF: {} mem={}KB iter={} parallel={}",
+            let memory_mb = kdf_params.memory_kb() / 1024;
+            log::info!(
+                "KDF: {} mem={}MB iter={} parallel={}",
                 kdf_params.kdf_type(),
-                kdf_params.memory_kb(),
+                memory_mb,
                 kdf_params.iterations(),
                 kdf_params.parallelism()
             );
+
+            // For very high memory (>=1GB), fall back to single-threaded Rust argon2
+            // The parallel Argon2 with 1GB+ memory often fails or hangs in browsers
+            if memory_mb >= 1024 {
+                log::warn!(
+                    "Very high memory Argon2 ({}MB) - using single-threaded unlock for reliability",
+                    memory_mb
+                );
+                // Fall back to standard worker unlock (single-threaded Rust argon2)
+                worker_unlock_standard(data_clone, password_str.clone(), move |result| {
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match result {
+                            Ok(unlock_result) => {
+                                let total_time = web_sys::window()
+                                    .and_then(|w| w.performance())
+                                    .map(|p| p.now() - start_time)
+                                    .unwrap_or(0.0);
+                                log::info!("High-memory unlock completed in {:.0}ms", total_time);
+
+                                let entries: Vec<EntryInfo> =
+                                    serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
+                                let groups: Vec<GroupInfo> =
+                                    serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+
+                                state.database.set(None);
+                                state.entries.set(entries);
+                                state.groups.set(groups);
+                                state.pending_file_data.set(None);
+                                state.error_message.set(None);
+                                state.current_view.set(AppView::Database);
+
+                                log::info!("Database unlocked successfully");
+                            }
+                            Err(e) => {
+                                log::error!("High-memory unlock failed: {}", e);
+                                error_signal.set(Some(e));
+                                is_unlocking.set(false);
+                            }
+                        }
+                    });
+                });
+                return;
+            }
+
+            // Warn about high memory usage
+            if memory_mb >= 512 {
+                log::warn!(
+                    "High memory Argon2 detected ({}MB). This may take a while...",
+                    memory_mb
+                );
+            }
 
             // Step 2: Run Argon2 with parallel threads
             let argon2_type = kdf_params.kdf_type();
@@ -395,7 +465,7 @@ impl AppState {
             let memory_kb = kdf_params.memory_kb() as u32;
             let parallelism = kdf_params.parallelism();
 
-            log::debug!("Running parallel Argon2 with {} threads...", parallelism);
+            log::info!("Running parallel Argon2 with {} threads, {}MB memory...", parallelism, memory_mb);
 
             argon2_hash(
                 argon2_type,

@@ -109,8 +109,14 @@ impl Argon2Client {
         onmessage.forget();
 
         // Set up error handler
+        let pending_for_error = pending_callbacks.clone();
         let onerror = Closure::wrap(Box::new(move |event: web_sys::ErrorEvent| {
-            log::error!("Argon2 worker error: {:?}", event.message());
+            let msg = event.message();
+            log::error!("Argon2 worker error: {}", msg);
+            // Call pending callback with error
+            if let Some(callback) = pending_for_error.borrow_mut().pop_front() {
+                callback(Err(format!("Argon2 worker error: {}", msg)));
+            }
         }) as Box<dyn FnMut(web_sys::ErrorEvent)>);
 
         worker.set_onerror(Some(onerror.as_ref().unchecked_ref()));

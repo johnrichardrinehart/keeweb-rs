@@ -269,8 +269,10 @@ async function loadArgon2(wasmRoot = '.', simd = false, pthread = false) {
         const file = `argon2${simd ? '-simd' : ''}-pthread.js`;
         const url = `${wasmRoot}/${file}`;
         importScripts(url);
+        // Initial: 16384 pages = 1 GiB to support high-memory Argon2 without growth
+        // Maximum: 65536 pages = 4 GiB (WASM32 limit)
         const wasmMemory = new WebAssembly.Memory({
-            initial: 1024,
+            initial: 16384,
             maximum: 65536,
             shared: true
         });

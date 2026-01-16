@@ -468,8 +468,24 @@ impl WorkerClient {
         })
     }
 
-    /// Request database unlock in the worker
+    /// Request database unlock in the worker (uses fast parallel argon2)
     pub fn unlock<F>(&self, data: Vec<u8>, password: String, callback: F)
+    where
+        F: FnOnce(Result<UnlockResult, String>) + 'static,
+    {
+        self.unlock_internal(data, password, "unlock_fast", callback);
+    }
+
+    /// Request database unlock using standard single-threaded Rust argon2
+    /// Use this for high-memory databases where parallel argon2 may fail
+    pub fn unlock_standard<F>(&self, data: Vec<u8>, password: String, callback: F)
+    where
+        F: FnOnce(Result<UnlockResult, String>) + 'static,
+    {
+        self.unlock_internal(data, password, "unlock", callback);
+    }
+
+    fn unlock_internal<F>(&self, data: Vec<u8>, password: String, unlock_type: &str, callback: F)
     where
         F: FnOnce(Result<UnlockResult, String>) + 'static,
     {
@@ -480,16 +496,16 @@ impl WorkerClient {
             id
         };
 
-        log::debug!("Sending unlock request, id={}, data_len={}", id, data.len());
+        log::debug!("Sending {} request, id={}, data_len={}", unlock_type, id, data.len());
 
         // Store the callback
         self.pending_requests
             .borrow_mut()
             .insert(id, Box::new(callback));
 
-        // Create the message object - use unlock_fast for argon2-browser SIMD
+        // Create the message object
         let message = Object::new();
-        Reflect::set(&message, &"type".into(), &"unlock_fast".into()).unwrap();
+        Reflect::set(&message, &"type".into(), &unlock_type.into()).unwrap();
         Reflect::set(&message, &"id".into(), &JsValue::from_f64(id as f64)).unwrap();
 
         // Create payload with data and password
