@@ -419,6 +419,7 @@ impl AppState {
 
             let memory_mb = kdf_params.memory_kb() / 1024;
             let parallelism = kdf_params.parallelism();
+            log::info!("KDF params: memory_kb={}, memory_mb={}, parallelism={}", kdf_params.memory_kb(), memory_mb, parallelism);
 
             // For high memory (>=1GB), the pthread implementation deadlocks in browsers
             // due to SharedArrayBuffer + pthread pool memory pressure.
