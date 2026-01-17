@@ -1,12 +1,35 @@
 //! Application state management
 
 use crate::argon2_client::Argon2Client;
+use crate::helper_client;
 use crate::worker_client::WorkerClient;
 use keeweb_wasm::WasmDatabase;
 use leptos::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
+use wasm_bindgen_futures::spawn_local;
+
+/// Log timing information only in debug builds
+#[cfg(debug_assertions)]
+macro_rules! debug_timing {
+    ($($arg:tt)*) => {
+        log::info!($($arg)*)
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! debug_timing {
+    ($($arg:tt)*) => {};
+}
+
+/// Get current performance timestamp
+fn perf_now() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or(0.0)
+}
 
 // Thread-local clients (WASM is single-threaded)
 thread_local! {
@@ -20,7 +43,6 @@ fn get_worker_client() -> Result<(), String> {
     WORKER_CLIENT.with(|client| {
         let mut client = client.borrow_mut();
         if client.is_none() {
-            log::debug!("Initializing worker client");
             match WorkerClient::new() {
                 Ok(wc) => {
                     *client = Some(wc);
@@ -39,7 +61,6 @@ fn get_argon2_client() -> Result<(), String> {
     ARGON2_CLIENT.with(|client| {
         let mut client = client.borrow_mut();
         if client.is_none() {
-            log::debug!("Initializing argon2-pthread client");
             match Argon2Client::new() {
                 Ok(ac) => {
                     *client = Some(ac);
@@ -68,7 +89,6 @@ where
             ac.init(move |result| {
                 if result.is_ok() {
                     ARGON2_READY.with(|ready| *ready.borrow_mut() = true);
-                    log::info!("Argon2-pthread initialized (SIMD + threads)");
                 }
                 callback(result);
             });
@@ -81,7 +101,8 @@ pub fn is_argon2_ready() -> bool {
     ARGON2_READY.with(|ready| *ready.borrow())
 }
 
-/// Run argon2 hash with parallel threads
+
+/// Run argon2 hash with parallel threads using argon2-pthread worker
 pub fn argon2_hash<F>(
     argon2_type: String,
     password: Vec<u8>,
@@ -146,8 +167,27 @@ where
     });
 }
 
+/// Send unlock request to worker using SIMD-only argon2 (no pthreads)
+/// Use this for high-memory databases (>=1GB) where pthread deadlocks
+/// Faster than single-threaded rust-argon2 due to SIMD acceleration
+pub fn worker_unlock_simd<F>(data: Vec<u8>, password: String, callback: F)
+where
+    F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
+{
+    if let Err(e) = get_worker_client() {
+        callback(Err(e));
+        return;
+    }
+
+    WORKER_CLIENT.with(|client| {
+        if let Some(ref wc) = *client.borrow() {
+            wc.unlock_simd(data, password, callback);
+        }
+    });
+}
+
 /// Send unlock request to worker using standard single-threaded Rust argon2
-/// Use this for high-memory databases where parallel argon2 may fail
+/// Slowest option, but most reliable fallback
 pub fn worker_unlock_standard<F>(data: Vec<u8>, password: String, callback: F)
 where
     F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
@@ -303,31 +343,20 @@ impl AppState {
 
     /// Attempt to unlock the database with a password
     pub fn unlock_database(&self, password: &str) -> Result<(), String> {
-        log::debug!("unlock_database called");
-
-        // Use get_untracked since we're not in a reactive context
         let data = self
             .pending_file_data
             .get_untracked()
             .ok_or_else(|| "No file data pending".to_string())?;
 
-        log::debug!("Got pending file data, {} bytes", data.len());
-        log::debug!("Attempting to open database (this may take a while for Argon2 key derivation)...");
-
         match WasmDatabase::open(&data, password) {
             Ok(db) => {
-                log::debug!("Database opened successfully");
-
-                // Parse entries and groups
                 let entries_json = db.get_entries();
-                log::debug!("Entries JSON: {}", &entries_json[..entries_json.len().min(500)]);
                 let entries: Vec<EntryInfo> =
                     serde_json::from_str(&entries_json).unwrap_or_default();
 
                 let groups_json = db.get_groups();
                 let groups: Vec<GroupInfo> = serde_json::from_str(&groups_json).unwrap_or_default();
 
-                // Update state
                 self.database
                     .set(Some(Rc::new(std::cell::RefCell::new(db))));
                 self.entries.set(entries);
@@ -336,15 +365,12 @@ impl AppState {
                 self.error_message.set(None);
                 self.current_view.set(AppView::Database);
 
-                log::info!("Database unlocked successfully");
                 Ok(())
             }
             Err(e) => {
-                // Convert JsValue error to string
                 let error = e
                     .as_string()
                     .unwrap_or_else(|| format!("{:?}", e));
-                log::error!("Failed to unlock database: {}", error);
                 Err(error)
             }
         }
@@ -358,9 +384,6 @@ impl AppState {
         is_unlocking: RwSignal<bool>,
         error_signal: RwSignal<Option<String>>,
     ) {
-        log::debug!("unlock_database_async called");
-
-        // Use get_untracked since we're not in a reactive context
         let data = match self.pending_file_data.get_untracked() {
             Some(d) => d,
             None => {
@@ -370,21 +393,15 @@ impl AppState {
             }
         };
 
-        log::debug!("Got pending file data, {} bytes", data.len());
-
         let state = *self;
         let password_str = password.to_string();
         let data_clone = data.clone();
 
         // Check if parallel argon2 is available
         if is_argon2_ready() {
-            log::debug!("Using parallel Argon2 (SIMD + threads)...");
 
             // Step 1: Extract KDF parameters from KDBX header
-            let start_time = web_sys::window()
-                .and_then(|w| w.performance())
-                .map(|p| p.now())
-                .unwrap_or(0.0);
+            let start_time = perf_now();
 
             let kdf_params = match keeweb_wasm::get_kdf_params(&data, &password_str) {
                 Ok(params) => params,
@@ -398,63 +415,131 @@ impl AppState {
             };
 
             let memory_mb = kdf_params.memory_kb() / 1024;
-            log::info!(
-                "KDF: {} mem={}MB iter={} parallel={}",
-                kdf_params.kdf_type(),
-                memory_mb,
-                kdf_params.iterations(),
-                kdf_params.parallelism()
-            );
+            let parallelism = kdf_params.parallelism();
 
-            // For very high memory (>=1GB), fall back to single-threaded Rust argon2
-            // The parallel Argon2 with 1GB+ memory often fails or hangs in browsers
+            // For high memory (>=1GB), the pthread implementation deadlocks in browsers
+            // due to SharedArrayBuffer + pthread pool memory pressure.
+            // Try the helper server first for native speed (~4s), otherwise fall back
+            // to single-threaded rust-argon2 which is slower (~30s) but reliable.
             if memory_mb >= 1024 {
-                log::warn!(
-                    "Very high memory Argon2 ({}MB) - using single-threaded unlock for reliability",
-                    memory_mb
-                );
-                // Fall back to standard worker unlock (single-threaded Rust argon2)
-                worker_unlock_standard(data_clone, password_str.clone(), move |result| {
-                    wasm_bindgen_futures::spawn_local(async move {
-                        match result {
-                            Ok(unlock_result) => {
-                                let total_time = web_sys::window()
-                                    .and_then(|w| w.performance())
-                                    .map(|p| p.now() - start_time)
-                                    .unwrap_or(0.0);
-                                log::info!("High-memory unlock completed in {:.0}ms", total_time);
+                let argon2_type = kdf_params.kdf_type();
+                let composite_key = kdf_params.composite_key();
+                let salt = kdf_params.salt();
+                let iterations = kdf_params.iterations() as u32;
+                let memory_kb = kdf_params.memory_kb() as u32;
+                let version = kdf_params.version();
 
-                                let entries: Vec<EntryInfo> =
-                                    serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
-                                let groups: Vec<GroupInfo> =
-                                    serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+                // Try helper server first if configured
+                if helper_client::is_helper_configured() {
+                    let argon2_type_clone = argon2_type.clone();
+                    let composite_key_clone = composite_key.clone();
+                    let salt_clone = salt.clone();
+                    let data_for_helper = data_clone.clone();
+                    let password_for_helper = password_str.clone();
 
-                                state.database.set(None);
-                                state.entries.set(entries);
-                                state.groups.set(groups);
-                                state.pending_file_data.set(None);
-                                state.error_message.set(None);
-                                state.current_view.set(AppView::Database);
+                    spawn_local(async move {
+                        match helper_client::check_helper_available().await {
+                            Ok(true) => {
 
-                                log::info!("Database unlocked successfully");
+                                match helper_client::helper_argon2_hash(
+                                    &argon2_type_clone,
+                                    &composite_key_clone,
+                                    &salt_clone,
+                                    iterations,
+                                    memory_kb,
+                                    parallelism,
+                                    32,
+                                    version,
+                                )
+                                .await
+                                {
+                                    Ok((derived_key, server_time_ms)) => {
+                                        debug_timing!("[TIMING] Argon2 (helper server): {}ms", server_time_ms);
+                                        let decrypt_start = perf_now();
+
+                                        // Decrypt with the derived key
+                                        worker_decrypt(
+                                            data_for_helper,
+                                            password_for_helper,
+                                            derived_key,
+                                            move |result| {
+                                                spawn_local(async move {
+                                                    match result {
+                                                        Ok(unlock_result) => {
+                                                            let decrypt_time = perf_now() - decrypt_start;
+                                                            debug_timing!("[TIMING] Decryption: {:.0}ms", decrypt_time);
+
+                                                            let entries: Vec<EntryInfo> =
+                                                                serde_json::from_str(
+                                                                    &unlock_result.entries_json,
+                                                                )
+                                                                .unwrap_or_default();
+                                                            let groups: Vec<GroupInfo> =
+                                                                serde_json::from_str(
+                                                                    &unlock_result.groups_json,
+                                                                )
+                                                                .unwrap_or_default();
+
+                                                            state.database.set(None);
+                                                            state.entries.set(entries);
+                                                            state.groups.set(groups);
+                                                            state.pending_file_data.set(None);
+                                                            state.error_message.set(None);
+                                                            state.current_view.set(AppView::Database);
+
+                                                            let total_time = perf_now() - start_time;
+                                                            debug_timing!("[TIMING] Total unlock (helper): {:.0}ms", total_time);
+                                                        }
+                                                        Err(e) => {
+                                                            error_signal.set(Some(e));
+                                                            is_unlocking.set(false);
+                                                        }
+                                                    }
+                                                });
+                                            },
+                                        );
+                                    }
+                                    Err(_) => {
+                                        // Fall back to single-threaded
+                                        do_slow_unlock(
+                                            data_for_helper,
+                                            password_for_helper,
+                                            state,
+                                            start_time,
+                                            error_signal,
+                                            is_unlocking,
+                                            memory_mb,
+                                        );
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                log::error!("High-memory unlock failed: {}", e);
-                                error_signal.set(Some(e));
-                                is_unlocking.set(false);
+                            Ok(false) | Err(_) => {
+                                do_slow_unlock(
+                                    data_for_helper,
+                                    password_for_helper,
+                                    state,
+                                    start_time,
+                                    error_signal,
+                                    is_unlocking,
+                                    memory_mb,
+                                );
                             }
                         }
                     });
-                });
-                return;
-            }
+                    return;
+                }
 
-            // Warn about high memory usage
-            if memory_mb >= 512 {
-                log::warn!(
-                    "High memory Argon2 detected ({}MB). This may take a while...",
-                    memory_mb
+                // No helper configured, use slow fallback
+                do_slow_unlock(
+                    data_clone,
+                    password_str.clone(),
+                    state,
+                    start_time,
+                    error_signal,
+                    is_unlocking,
+                    memory_mb,
                 );
+                return;
             }
 
             // Step 2: Run Argon2 with parallel threads
@@ -463,9 +548,6 @@ impl AppState {
             let salt = kdf_params.salt();
             let iterations = kdf_params.iterations() as u32;
             let memory_kb = kdf_params.memory_kb() as u32;
-            let parallelism = kdf_params.parallelism();
-
-            log::info!("Running parallel Argon2 with {} threads, {}MB memory...", parallelism, memory_mb);
 
             argon2_hash(
                 argon2_type,
@@ -479,26 +561,22 @@ impl AppState {
                     wasm_bindgen_futures::spawn_local(async move {
                         match argon2_result {
                             Ok(derived_key) => {
-                                let argon2_time = web_sys::window()
-                                    .and_then(|w| w.performance())
-                                    .map(|p| p.now() - start_time)
-                                    .unwrap_or(0.0);
-                                log::info!("Parallel Argon2 completed in {:.0}ms", argon2_time);
+                                let argon2_time = perf_now() - start_time;
+                                debug_timing!("[TIMING] Argon2 (parallel): {:.0}ms", argon2_time);
+                                let decrypt_start = perf_now();
 
                                 // Step 3: Decrypt with the derived key in worker
-                                log::debug!("Decrypting database with derived key...");
                                 worker_decrypt(data_clone, password_str, derived_key, move |result| {
                                     wasm_bindgen_futures::spawn_local(async move {
                                         match result {
                                             Ok(unlock_result) => {
-                                                log::debug!("Decryption successful");
+                                                let decrypt_time = perf_now() - decrypt_start;
+                                                debug_timing!("[TIMING] Decryption: {:.0}ms", decrypt_time);
 
                                                 let entries: Vec<EntryInfo> =
                                                     serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
                                                 let groups: Vec<GroupInfo> =
                                                     serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
-
-                                                log::debug!("Parsed {} entries and {} groups", entries.len(), groups.len());
 
                                                 state.database.set(None);
                                                 state.entries.set(entries);
@@ -507,10 +585,10 @@ impl AppState {
                                                 state.error_message.set(None);
                                                 state.current_view.set(AppView::Database);
 
-                                                log::info!("Database unlocked successfully (parallel)");
+                                                let total_time = perf_now() - start_time;
+                                                debug_timing!("[TIMING] Total unlock (parallel): {:.0}ms", total_time);
                                             }
                                             Err(e) => {
-                                                log::error!("Decryption failed: {}", e);
                                                 error_signal.set(Some(e));
                                                 is_unlocking.set(false);
                                             }
@@ -518,14 +596,15 @@ impl AppState {
                                     });
                                 });
                             }
-                            Err(e) => {
-                                log::error!("Parallel Argon2 failed: {}", e);
-                                log::debug!("Falling back to single-threaded unlock...");
+                            Err(_) => {
                                 // Fall back to worker-based unlock
                                 worker_unlock(data_clone, password_str, move |result| {
                                     wasm_bindgen_futures::spawn_local(async move {
                                         match result {
                                             Ok(unlock_result) => {
+                                                let total_time = perf_now() - start_time;
+                                                debug_timing!("[TIMING] Total unlock (worker fallback): {:.0}ms", total_time);
+
                                                 let entries: Vec<EntryInfo> =
                                                     serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
                                                 let groups: Vec<GroupInfo> =
@@ -537,8 +616,6 @@ impl AppState {
                                                 state.pending_file_data.set(None);
                                                 state.error_message.set(None);
                                                 state.current_view.set(AppView::Database);
-
-                                                log::info!("Database unlocked (fallback)");
                                             }
                                             Err(e) => {
                                                 error_signal.set(Some(e));
@@ -554,11 +631,14 @@ impl AppState {
             );
         } else {
             // Argon2 not ready, use legacy worker unlock
-            log::debug!("Parallel Argon2 not ready, using worker unlock...");
+            let start_time = perf_now();
             worker_unlock(data, password_str, move |result| {
                 wasm_bindgen_futures::spawn_local(async move {
                     match result {
                         Ok(unlock_result) => {
+                            let total_time = perf_now() - start_time;
+                            debug_timing!("[TIMING] Total unlock (legacy worker): {:.0}ms", total_time);
+
                             let entries: Vec<EntryInfo> =
                                 serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
                             let groups: Vec<GroupInfo> =
@@ -570,8 +650,6 @@ impl AppState {
                             state.pending_file_data.set(None);
                             state.error_message.set(None);
                             state.current_view.set(AppView::Database);
-
-                            log::info!("Database unlocked via worker");
                         }
                         Err(e) => {
                             error_signal.set(Some(e));
@@ -649,4 +727,42 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Helper function for slow single-threaded unlock (used for high-memory Argon2)
+fn do_slow_unlock(
+    data: Vec<u8>,
+    password: String,
+    state: AppState,
+    start_time: f64,
+    error_signal: RwSignal<Option<String>>,
+    is_unlocking: RwSignal<bool>,
+    _memory_mb: u64,
+) {
+    worker_unlock_standard(data, password, move |result| {
+        spawn_local(async move {
+            match result {
+                Ok(unlock_result) => {
+                    let total_time = perf_now() - start_time;
+                    debug_timing!("[TIMING] Total unlock (slow/single-threaded): {:.0}ms", total_time);
+
+                    let entries: Vec<EntryInfo> =
+                        serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
+                    let groups: Vec<GroupInfo> =
+                        serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+
+                    state.database.set(None);
+                    state.entries.set(entries);
+                    state.groups.set(groups);
+                    state.pending_file_data.set(None);
+                    state.error_message.set(None);
+                    state.current_view.set(AppView::Database);
+                }
+                Err(e) => {
+                    error_signal.set(Some(e));
+                    is_unlocking.set(false);
+                }
+            }
+        });
+    });
 }
