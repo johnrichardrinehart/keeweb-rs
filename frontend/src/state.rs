@@ -422,11 +422,12 @@ impl AppState {
         let parallelism = kdf_params.parallelism();
         log::info!("KDF params: memory_kb={}, memory_mb={}, parallelism={}", kdf_params.memory_kb(), memory_mb, parallelism);
 
-        // For high memory (>=1GB), try the helper server first for native speed (~4s).
+        // For high memory (>=256MB), try the helper server first for native speed.
         // The helper doesn't require pthread/SharedArrayBuffer - it runs natively on the server.
         // This check happens BEFORE checking is_argon2_ready() because the helper is preferred
         // for high-memory databases regardless of browser capabilities.
-        if memory_mb >= 1024 {
+        // Default KeePassXC memory is 64MB, so this catches users with elevated security settings.
+        if memory_mb >= 256 {
                 let argon2_type = kdf_params.kdf_type();
                 let composite_key = kdf_params.composite_key();
                 let salt = kdf_params.salt();
