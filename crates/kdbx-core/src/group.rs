@@ -112,10 +112,12 @@ impl Group {
 }
 
 /// Builder for creating groups
+#[allow(dead_code)]
 pub struct GroupBuilder {
     group: Group,
 }
 
+#[allow(dead_code)]
 impl GroupBuilder {
     pub fn new(name: impl Into<String>) -> Self {
         Self {

@@ -156,11 +156,11 @@ impl Merger {
                     right_modified,
                 } => {
                     // Entry modified in both - need to merge field by field
-                    let base_entry = base_entries.get(&entry_diff.uuid);
+                    let _base_entry = base_entries.get(&entry_diff.uuid);
                     let left_entry = left_entries.get(&entry_diff.uuid);
                     let right_entry = right_entries.get(&entry_diff.uuid);
 
-                    if let (Some(left_e), Some(right_e)) = (left_entry, right_entry) {
+                    if let (Some(left_e), Some(_right_e)) = (left_entry, right_entry) {
                         let mut merged_entry = (*left_e).clone();
                         let left_newer = left_modified > right_modified;
 

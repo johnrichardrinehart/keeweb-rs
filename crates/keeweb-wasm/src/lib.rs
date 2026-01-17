@@ -12,6 +12,7 @@ use wasm_bindgen::prelude::*;
 
 /// Initialize panic hook for better error messages.
 /// Call this function once at startup from your application.
+#[allow(unexpected_cfgs)]
 pub fn init_panic_hook() {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
@@ -522,7 +523,6 @@ pub fn is_valid_totp(otp_value: &str) -> bool {
 
 /// Simple XML parser for KDBX format - extracts entries and groups
 fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
-    use std::collections::HashMap;
 
     // Skip inner header (binary format before XML)
     let xml_start = find_xml_start(xml_data)?;
@@ -734,6 +734,7 @@ fn find_matching_close_tag(xml: &str, tag: &str) -> Option<usize> {
 }
 
 /// Remove all <History>...</History> sections from XML to avoid parsing old entry versions
+#[allow(dead_code)]
 fn remove_history_sections(xml: &str) -> String {
     let mut result = String::with_capacity(xml.len());
     let mut pos = 0;

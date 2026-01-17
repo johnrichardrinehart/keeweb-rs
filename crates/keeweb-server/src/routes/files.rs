@@ -46,7 +46,7 @@ pub async fn list_conflicts(State(state): State<Arc<AppState>>) -> impl IntoResp
 }
 
 mod urlencoding {
-    pub fn decode(input: &str) -> Result<std::borrow::Cow<str>, ()> {
+    pub fn decode(input: &str) -> Result<std::borrow::Cow<'_, str>, ()> {
         // Simple URL decoding
         let mut result = String::with_capacity(input.len());
         let mut chars = input.chars().peekable();

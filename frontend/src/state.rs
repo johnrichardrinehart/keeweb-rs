@@ -170,6 +170,7 @@ where
 /// Send unlock request to worker using SIMD-only argon2 (no pthreads)
 /// Use this for high-memory databases (>=1GB) where pthread deadlocks
 /// Faster than single-threaded rust-argon2 due to SIMD acceleration
+#[allow(dead_code)]
 pub fn worker_unlock_simd<F>(data: Vec<u8>, password: String, callback: F)
 where
     F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
@@ -312,6 +313,7 @@ pub struct AppState {
     /// Error message to display
     pub error_message: RwSignal<Option<String>>,
     /// Backend URL (if configured)
+    #[allow(dead_code)]
     pub backend_url: RwSignal<Option<String>>,
 }
 
@@ -342,6 +344,7 @@ impl AppState {
     }
 
     /// Attempt to unlock the database with a password
+    #[allow(dead_code)]
     pub fn unlock_database(&self, password: &str) -> Result<(), String> {
         let data = self
             .pending_file_data
@@ -675,6 +678,7 @@ impl AppState {
     }
 
     /// Refresh entries from the database
+    #[allow(dead_code)]
     pub fn refresh_entries(&self) {
         if let Some(db) = self.database.get() {
             let db = db.borrow();

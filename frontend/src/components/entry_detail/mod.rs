@@ -176,6 +176,7 @@ fn EntryDetailContent(
                         value=password_for_display
                         node_ref=password_input_ref
                         readonly=true
+                        autocomplete="off"
                     />
                     <button
                         class="btn-icon"

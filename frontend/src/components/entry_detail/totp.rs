@@ -2,7 +2,6 @@
 //!
 //! This is a standalone implementation that doesn't require the keeweb-wasm module.
 
-use wasm_bindgen::prelude::*;
 
 /// TOTP configuration parsed from an otp attribute
 #[derive(Debug, Clone)]
@@ -10,14 +9,17 @@ pub struct TotpConfig {
     /// Base32-encoded secret key
     pub secret: String,
     /// Number of digits in the generated code (default: 6)
+    #[allow(dead_code)]
     pub digits: u32,
     /// Time period in seconds (default: 30)
     pub period: u32,
     /// Hash algorithm (default: SHA1)
     pub algorithm: TotpAlgorithm,
     /// Issuer (optional, for display purposes)
+    #[allow(dead_code)]
     pub issuer: Option<String>,
     /// Account/label (optional, for display purposes)
+    #[allow(dead_code)]
     pub label: Option<String>,
 }
 
@@ -35,6 +37,7 @@ pub struct TotpResult {
     pub code: String,
     pub period: u32,
     pub remaining: u32,
+    #[allow(dead_code)]
     pub digits: u32,
 }
 

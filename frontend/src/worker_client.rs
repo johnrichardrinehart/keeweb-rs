@@ -13,6 +13,7 @@ use web_sys::{Blob, BlobPropertyBag, MessageEvent, Url, Worker};
 pub struct UnlockResult {
     pub entries_json: String,
     pub groups_json: String,
+    #[allow(dead_code)]
     pub metadata_json: String,
 }
 
@@ -134,7 +135,7 @@ async function initKeewebWasm() {
         const wasmUrl = BASE_URL + '/wasm/keeweb_wasm_bg.wasm';
 
         const module = await import(jsUrl);
-        wasmModule = await module.default(wasmUrl);
+        wasmModule = await module.default({ module_or_path: wasmUrl });
 
         getKdfParams = module.getKdfParams;
         decryptWithDerivedKey = module.decryptWithDerivedKey;
@@ -381,13 +382,13 @@ impl WorkerClient {
         let blob_parts = Array::new();
         blob_parts.push(&JsValue::from_str(&script));
 
-        let mut options = BlobPropertyBag::new();
+        let options = BlobPropertyBag::new();
         options.set_type("application/javascript");
 
         let blob = Blob::new_with_str_sequence_and_options(&blob_parts, &options)?;
         let url = Url::create_object_url_with_blob(&blob)?;
 
-        let mut worker_options = web_sys::WorkerOptions::new();
+        let worker_options = web_sys::WorkerOptions::new();
         worker_options.set_type(web_sys::WorkerType::Module);
 
         let worker = Worker::new_with_options(&url, &worker_options)?;
@@ -485,6 +486,7 @@ impl WorkerClient {
     /// Request database unlock using SIMD-only argon2 (no pthreads)
     /// Use this for high-memory databases (>=1GB) where pthread deadlocks
     /// Still faster than single-threaded rust-argon2 due to SIMD
+    #[allow(dead_code)]
     pub fn unlock_simd<F>(&self, data: Vec<u8>, password: String, callback: F)
     where
         F: FnOnce(Result<UnlockResult, String>) + 'static,

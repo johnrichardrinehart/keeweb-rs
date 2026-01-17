@@ -25,8 +25,10 @@ pub struct Database {
     /// Root group UUID
     root_group: Uuid,
     /// Recycle bin group UUID (if enabled)
+    #[allow(dead_code)]
     recycle_bin: Option<Uuid>,
     /// Whether recycle bin is enabled
+    #[allow(dead_code)]
     recycle_bin_enabled: bool,
     /// The underlying keepass database (for saving)
     #[allow(dead_code)]

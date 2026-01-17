@@ -29,6 +29,7 @@ enum Argon2Method {
 pub struct Argon2Client {
     worker: Worker,
     pending_callbacks: Rc<RefCell<VecDeque<Argon2Callback>>>,
+    #[allow(dead_code)]
     ready: Rc<RefCell<bool>>,
 }
 
@@ -244,6 +245,7 @@ impl Argon2Client {
     }
 
     /// Check if the worker is ready
+    #[allow(dead_code)]
     pub fn is_ready(&self) -> bool {
         *self.ready.borrow()
     }

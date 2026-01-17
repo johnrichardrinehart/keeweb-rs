@@ -60,7 +60,7 @@ pub fn FilePicker() -> impl IntoView {
         let input_ref = file_input_ref;
         // Defer the click to next frame to avoid closure recursion
         request_animation_frame(move || {
-            if let Some(input) = input_ref.get() {
+            if let Some(input) = input_ref.get_untracked() {
                 input.click();
             }
         });

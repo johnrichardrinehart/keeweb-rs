@@ -288,9 +288,9 @@ pub fn decrypt_kdbx4_with_key(
 ) -> Result<Vec<u8>> {
     let header = parse_kdbx4_header(data)?;
 
-    // Compute composite key from password
+    // Compute composite key from password (unused here but kept for reference)
     let password_hash = Sha256::digest(password.as_bytes());
-    let composite_key = Sha256::digest(&password_hash);
+    let _composite_key = Sha256::digest(&password_hash);
 
     // Note: The transformed_key parameter replaces the slow KDF step
     // It should be computed as: Argon2(composite_key, salt, params)
@@ -570,7 +570,6 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
     reader.config_mut().trim_text(false); // Preserve whitespace in text content
 
     let mut writer = Writer::new(Cursor::new(Vec::new()));
-    let mut count = 0;
     let mut in_protected_value = false;
 
     loop {
@@ -590,9 +589,8 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
 
                     if is_protected {
                         in_protected_value = true;
-                        count += 1;
                         // Write the tag without the Protected attribute
-                        let mut new_elem = BytesStart::new("Value");
+                        let new_elem = BytesStart::new("Value");
                         writer.write_event(Event::Start(new_elem))
                             .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
                         continue;
@@ -645,7 +643,6 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
                     });
 
                     if is_protected {
-                        count += 1;
                         // Write as <Value></Value> without Protected attribute
                         let new_elem = BytesStart::new("Value");
                         writer.write_event(Event::Empty(new_elem))

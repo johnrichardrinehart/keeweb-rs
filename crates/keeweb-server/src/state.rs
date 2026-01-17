@@ -1,7 +1,6 @@
 //! Application state
 
 use crate::config::Config;
-use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// File system event
