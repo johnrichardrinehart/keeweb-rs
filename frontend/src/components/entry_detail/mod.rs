@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::password_generator::PasswordGenerator;
-use crate::state::{AppState, HistoryEntryInfo};
+use crate::state::{AppState, AttachmentInfo, HistoryEntryInfo};
 use crate::utils::clipboard;
 
 mod totp;
@@ -35,6 +35,7 @@ pub fn EntryDetail() -> impl IntoView {
                         let notes = e.notes.clone();
                         let otp = e.otp.clone();
                         let custom_attributes = e.custom_attributes.clone();
+                        let attachments = e.attachments.clone();
                         let history = e.history.clone();
                         let url_for_link = url.clone();
                         let url_is_empty = url.is_empty();
@@ -50,6 +51,7 @@ pub fn EntryDetail() -> impl IntoView {
                                 notes=notes
                                 otp=otp
                                 custom_attributes=custom_attributes
+                                attachments=attachments
                                 history=history
                                 show_password=show_password
                                 show_generator=show_generator
@@ -76,6 +78,7 @@ fn EntryDetailContent(
     notes: String,
     otp: Option<String>,
     custom_attributes: HashMap<String, String>,
+    attachments: Vec<AttachmentInfo>,
     history: Vec<HistoryEntryInfo>,
     show_password: RwSignal<bool>,
     show_generator: RwSignal<bool>,
@@ -317,6 +320,36 @@ fn EntryDetailContent(
             } else {
                 view! { <span></span> }.into_view()
             }}
+
+            // Attachments section
+            {if !attachments.is_empty() {
+                view! {
+                    <div class="attachments-section">
+                        <h3 class="section-header">"Attachments"</h3>
+                        <div class="attachments-list">
+                            {attachments.into_iter().map(|attachment| {
+                                let name = attachment.name.clone();
+                                let size_display = attachment.size.map(|s| format_file_size(s)).unwrap_or_default();
+
+                                view! {
+                                    <div class="attachment-item">
+                                        <AttachmentIcon />
+                                        <span class="attachment-name">{name}</span>
+                                        {if !size_display.is_empty() {
+                                            view! { <span class="attachment-size">{size_display}</span> }.into_view()
+                                        } else {
+                                            view! { <span></span> }.into_view()
+                                        }}
+                                    </div>
+                                }
+                            }).collect_view()}
+                        </div>
+                        <p class="attachments-note">"Attachment download not yet supported"</p>
+                    </div>
+                }.into_view()
+            } else {
+                view! { <span></span> }.into_view()
+            }}
         </div>
 
         <div class="entry-detail-footer">
@@ -421,6 +454,33 @@ fn TotpIcon() -> impl IntoView {
         <svg viewBox="0 0 24 24" width="18" height="18">
             <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
         </svg>
+    }
+}
+
+/// Attachment/file icon
+#[component]
+fn AttachmentIcon() -> impl IntoView {
+    view! {
+        <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/>
+        </svg>
+    }
+}
+
+/// Format file size in human-readable format
+fn format_file_size(bytes: usize) -> String {
+    const KB: usize = 1024;
+    const MB: usize = KB * 1024;
+    const GB: usize = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
     }
 }
 

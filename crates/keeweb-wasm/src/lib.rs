@@ -596,6 +596,19 @@ struct HistoryEntry {
     last_modification_time: Option<String>,
 }
 
+/// File attachment metadata
+#[derive(Serialize, Clone)]
+struct Attachment {
+    /// Display name of the attachment
+    name: String,
+    /// Reference index to the binary data in the inner header
+    #[serde(rename = "ref")]
+    ref_index: u32,
+    /// Size in bytes (if known)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<usize>,
+}
+
 #[derive(Serialize)]
 struct SimpleEntry {
     uuid: String,
@@ -610,6 +623,9 @@ struct SimpleEntry {
     /// Custom attributes (non-standard String fields)
     #[serde(default)]
     custom_attributes: HashMap<String, String>,
+    /// File attachments
+    #[serde(default)]
+    attachments: Vec<Attachment>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     history: Vec<HistoryEntry>,
@@ -839,6 +855,9 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     // Extract custom attributes (all String fields that aren't standard or OTP fields)
     let custom_attributes = extract_custom_attributes(xml_to_parse);
 
+    // Extract file attachments
+    let attachments = extract_attachments(xml_to_parse);
+
     // Parse history entries
     let history = if let Some(hist_xml) = history_xml {
         parse_history_entries(hist_xml)
@@ -856,8 +875,53 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         parent_group: None, // TODO: track parent
         otp,
         custom_attributes,
+        attachments,
         history,
     })
+}
+
+/// Extract file attachments from an entry's XML
+fn extract_attachments(xml: &str) -> Vec<Attachment> {
+    let mut attachments = Vec::new();
+
+    // Find all <Binary> elements (attachments in KDBX XML)
+    for binary_elem in find_elements(xml, "Binary") {
+        // Extract the key (filename)
+        if let Some(name) = extract_tag_value(&binary_elem, "Key") {
+            // Extract the reference index from <Value Ref="N"/>
+            if let Some(ref_index) = extract_binary_ref(&binary_elem) {
+                attachments.push(Attachment {
+                    name,
+                    ref_index,
+                    size: None, // Size would require access to binary data
+                });
+            }
+        }
+    }
+
+    attachments
+}
+
+/// Extract the Ref attribute value from a Binary's Value element
+fn extract_binary_ref(binary_elem: &str) -> Option<u32> {
+    // Look for <Value Ref="N"/> or <Value Ref="N">
+    let value_start = binary_elem.find("<Value")?;
+    let value_area = &binary_elem[value_start..];
+
+    // Find the end of the Value tag
+    let tag_end = value_area.find('>')?;
+    let tag_content = &value_area[..tag_end];
+
+    // Look for Ref="..." attribute
+    let ref_start = tag_content.find("Ref=\"")?;
+    let ref_value_start = ref_start + 5; // Skip 'Ref="'
+    let ref_value_area = &tag_content[ref_value_start..];
+
+    // Find the closing quote
+    let ref_end = ref_value_area.find('"')?;
+    let ref_str = &ref_value_area[..ref_end];
+
+    ref_str.parse().ok()
 }
 
 /// Extract all custom attributes from an entry's XML

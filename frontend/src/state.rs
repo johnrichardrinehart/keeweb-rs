@@ -257,6 +257,19 @@ pub struct HistoryEntryInfo {
     pub last_modification_time: Option<String>,
 }
 
+/// File attachment metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentInfo {
+    /// Display name of the attachment
+    pub name: String,
+    /// Reference index to the binary data
+    #[serde(rename = "ref")]
+    pub ref_index: u32,
+    /// Size in bytes (if known)
+    #[serde(default)]
+    pub size: Option<usize>,
+}
+
 /// Entry data for display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryInfo {
@@ -275,6 +288,9 @@ pub struct EntryInfo {
     /// Custom attributes (non-standard String fields)
     #[serde(default)]
     pub custom_attributes: std::collections::HashMap<String, String>,
+    /// File attachments
+    #[serde(default)]
+    pub attachments: Vec<AttachmentInfo>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     pub history: Vec<HistoryEntryInfo>,
