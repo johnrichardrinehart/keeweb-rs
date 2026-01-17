@@ -400,39 +400,33 @@ impl AppState {
         let password_str = password.to_string();
         let data_clone = data.clone();
 
-        // Check if parallel argon2 is available
-        let argon2_ready = is_argon2_ready();
-        log::info!("unlock_database_async: is_argon2_ready() = {}", argon2_ready);
+        // Step 1: Extract KDF parameters from KDBX header to check memory requirements
+        let start_time = perf_now();
+        log::info!("Extracting KDF params...");
 
-        if argon2_ready {
+        let kdf_params = match keeweb_wasm::get_kdf_params(&data, &password_str) {
+            Ok(params) => {
+                log::info!("KDF params extracted successfully");
+                params
+            }
+            Err(e) => {
+                let err = e.as_string().unwrap_or_else(|| format!("{:?}", e));
+                log::error!("Failed to extract KDF params: {}", err);
+                error_signal.set(Some(err));
+                is_unlocking.set(false);
+                return;
+            }
+        };
 
-            // Step 1: Extract KDF parameters from KDBX header
-            let start_time = perf_now();
-            log::info!("Extracting KDF params...");
+        let memory_mb = kdf_params.memory_kb() / 1024;
+        let parallelism = kdf_params.parallelism();
+        log::info!("KDF params: memory_kb={}, memory_mb={}, parallelism={}", kdf_params.memory_kb(), memory_mb, parallelism);
 
-            let kdf_params = match keeweb_wasm::get_kdf_params(&data, &password_str) {
-                Ok(params) => {
-                    log::info!("KDF params extracted successfully");
-                    params
-                }
-                Err(e) => {
-                    let err = e.as_string().unwrap_or_else(|| format!("{:?}", e));
-                    log::error!("Failed to extract KDF params: {}", err);
-                    error_signal.set(Some(err));
-                    is_unlocking.set(false);
-                    return;
-                }
-            };
-
-            let memory_mb = kdf_params.memory_kb() / 1024;
-            let parallelism = kdf_params.parallelism();
-            log::info!("KDF params: memory_kb={}, memory_mb={}, parallelism={}", kdf_params.memory_kb(), memory_mb, parallelism);
-
-            // For high memory (>=1GB), the pthread implementation deadlocks in browsers
-            // due to SharedArrayBuffer + pthread pool memory pressure.
-            // Try the helper server first for native speed (~4s), otherwise fall back
-            // to single-threaded rust-argon2 which is slower (~30s) but reliable.
-            if memory_mb >= 1024 {
+        // For high memory (>=1GB), try the helper server first for native speed (~4s).
+        // The helper doesn't require pthread/SharedArrayBuffer - it runs natively on the server.
+        // This check happens BEFORE checking is_argon2_ready() because the helper is preferred
+        // for high-memory databases regardless of browser capabilities.
+        if memory_mb >= 1024 {
                 let argon2_type = kdf_params.kdf_type();
                 let composite_key = kdf_params.composite_key();
                 let salt = kdf_params.salt();
@@ -570,8 +564,13 @@ impl AppState {
                     memory_mb,
                 );
                 return;
-            }
+        }
 
+        // For normal memory (<1GB), use parallel argon2 if available
+        let argon2_ready = is_argon2_ready();
+        log::info!("Normal memory path: is_argon2_ready() = {}", argon2_ready);
+
+        if argon2_ready {
             // Step 2: Run Argon2 with parallel threads
             let argon2_type = kdf_params.kdf_type();
             let composite_key = kdf_params.composite_key();
