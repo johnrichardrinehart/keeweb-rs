@@ -25,6 +25,8 @@ pub fn UnlockDialog() -> impl IntoView {
     let is_available = helper_client::is_helper_available();
     log::info!("UnlockDialog init: is_helper_available() = {}", is_available);
     let helper_enabled = create_rw_signal(is_available);
+    let helper_error = create_rw_signal(Option::<String>::None);
+    let helper_connecting = create_rw_signal(false);
 
     let password_input_ref = create_node_ref::<leptos::html::Input>();
 
@@ -32,19 +34,25 @@ pub fn UnlockDialog() -> impl IntoView {
     let apply_helper_config = move || {
         let url = helper_url.get();
         if !url.is_empty() {
+            helper_error.set(None);
+            helper_connecting.set(true);
             helper_client::configure_helper(&url);
             // Spawn async task to verify connection
             spawn_local(async move {
                 match helper_client::check_helper_available().await {
                     Ok(available) => {
+                        helper_connecting.set(false);
                         helper_enabled.set(available);
                         if !available {
                             log::warn!("Helper server at {} is not reachable", url);
+                            helper_error.set(Some(format!("Connection failed: server not reachable")));
                         }
                     }
                     Err(e) => {
                         log::error!("Failed to check helper availability: {}", e);
+                        helper_connecting.set(false);
                         helper_enabled.set(false);
+                        helper_error.set(Some(format!("Connection failed: {}", e)));
                     }
                 }
             });
@@ -231,8 +239,9 @@ pub fn UnlockDialog() -> impl IntoView {
                                                     type="button"
                                                     class="btn btn-small"
                                                     on:click=move |_| apply_helper_config()
+                                                    disabled=move || helper_connecting.get()
                                                 >
-                                                    "Connect"
+                                                    {move || if helper_connecting.get() { "Connecting..." } else { "Connect" }}
                                                 </button>
                                             }
                                         >
@@ -246,6 +255,11 @@ pub fn UnlockDialog() -> impl IntoView {
                                         </Show>
                                     </div>
                                 </div>
+                                <Show when=move || helper_error.get().is_some()>
+                                    <p class="helper-status helper-status-error">
+                                        {move || helper_error.get().unwrap_or_default()}
+                                    </p>
+                                </Show>
                                 <Show when=move || helper_enabled.get()>
                                     <p class="helper-status helper-status-enabled">
                                         "Helper connected - high-memory databases will use native Argon2"

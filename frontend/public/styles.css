@@ -390,6 +390,10 @@ html, body {
     color: var(--color-success, #22c55e);
 }
 
+.helper-status-error {
+    color: var(--color-danger, #ef4444);
+}
+
 /* Form elements */
 .form-group {
     margin-bottom: var(--spacing-md);
