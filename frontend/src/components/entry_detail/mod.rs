@@ -36,6 +36,7 @@ pub fn EntryDetail() -> impl IntoView {
                         let otp = e.otp.clone();
                         let custom_attributes = e.custom_attributes.clone();
                         let attachments = e.attachments.clone();
+                        let tags = e.tags.clone();
                         let history = e.history.clone();
                         let url_for_link = url.clone();
                         let url_is_empty = url.is_empty();
@@ -52,6 +53,7 @@ pub fn EntryDetail() -> impl IntoView {
                                 otp=otp
                                 custom_attributes=custom_attributes
                                 attachments=attachments
+                                tags=tags
                                 history=history
                                 show_password=show_password
                                 show_generator=show_generator
@@ -79,6 +81,7 @@ fn EntryDetailContent(
     otp: Option<String>,
     custom_attributes: HashMap<String, String>,
     attachments: Vec<AttachmentInfo>,
+    tags: Vec<String>,
     history: Vec<HistoryEntryInfo>,
     show_password: RwSignal<bool>,
     show_generator: RwSignal<bool>,
@@ -143,7 +146,20 @@ fn EntryDetailContent(
 
     view! {
         <div class="entry-detail-header">
-            <h2>{title_for_header}</h2>
+            <div class="entry-detail-title-row">
+                <h2>{title_for_header}</h2>
+                {if !tags.is_empty() {
+                    view! {
+                        <div class="tags-container">
+                            {tags.into_iter().map(|tag| {
+                                view! { <span class="tag">{tag}</span> }
+                            }).collect_view()}
+                        </div>
+                    }.into_view()
+                } else {
+                    view! { <span></span> }.into_view()
+                }}
+            </div>
             <button class="btn-icon" on:click=move |_| state.selected_entry.set(None) title="Close">
                 <svg viewBox="0 0 24 24" width="20" height="20">
                     <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>

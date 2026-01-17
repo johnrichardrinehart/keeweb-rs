@@ -626,6 +626,9 @@ struct SimpleEntry {
     /// File attachments
     #[serde(default)]
     attachments: Vec<Attachment>,
+    /// Tags (semicolon-separated in KDBX, parsed into list)
+    #[serde(default)]
+    tags: Vec<String>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     history: Vec<HistoryEntry>,
@@ -858,6 +861,9 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     // Extract file attachments
     let attachments = extract_attachments(xml_to_parse);
 
+    // Extract tags (semicolon-separated in <Tags> element)
+    let tags = extract_tags(xml_to_parse);
+
     // Parse history entries
     let history = if let Some(hist_xml) = history_xml {
         parse_history_entries(hist_xml)
@@ -876,8 +882,26 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         otp,
         custom_attributes,
         attachments,
+        tags,
         history,
     })
+}
+
+/// Extract tags from the <Tags> element (semicolon-separated)
+fn extract_tags(xml: &str) -> Vec<String> {
+    if let Some(tags_str) = extract_tag_value(xml, "Tags") {
+        if tags_str.is_empty() {
+            Vec::new()
+        } else {
+            tags_str
+                .split(';')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+    } else {
+        Vec::new()
+    }
 }
 
 /// Extract file attachments from an entry's XML

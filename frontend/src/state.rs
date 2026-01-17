@@ -291,6 +291,9 @@ pub struct EntryInfo {
     /// File attachments
     #[serde(default)]
     pub attachments: Vec<AttachmentInfo>,
+    /// Tags
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     pub history: Vec<HistoryEntryInfo>,
