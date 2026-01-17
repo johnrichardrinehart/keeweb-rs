@@ -16,6 +16,8 @@ pub fn App() -> impl IntoView {
     provide_context(state);
 
     // Initialize argon2-pthread worker in background (for parallel KDF)
+    // Note: The wasm-bindgen-rayon thread pool is initialized by initializer.js
+    // before this code runs, so is_rayon_ready() will return true if it succeeded
     init_argon2(|result| {
         match result {
             Ok(()) => log::info!("Argon2-pthread initialized (parallel KDF ready)"),

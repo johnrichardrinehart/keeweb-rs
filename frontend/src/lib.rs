@@ -5,6 +5,7 @@
 mod app;
 mod argon2_client;
 mod components;
+pub mod helper_client;
 mod state;
 mod utils;
 mod worker_client;
