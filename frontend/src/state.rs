@@ -721,7 +721,7 @@ impl AppState {
         let query = self.search_query.get().to_lowercase();
         let selected_group = self.selected_group.get();
 
-        entries
+        let mut filtered: Vec<EntryInfo> = entries
             .into_iter()
             .filter(|entry| {
                 // Filter by group if selected
@@ -741,7 +741,12 @@ impl AppState {
 
                 true
             })
-            .collect()
+            .collect();
+
+        // Sort alphabetically by title (case-insensitive)
+        filtered.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+
+        filtered
     }
 
     /// Get the currently selected entry
