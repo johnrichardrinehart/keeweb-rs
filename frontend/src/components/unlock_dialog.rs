@@ -22,7 +22,9 @@ pub fn UnlockDialog() -> impl IntoView {
     let initial_url = helper_client::get_helper_url()
         .unwrap_or_else(|| helper_client::DEFAULT_HELPER_URL.to_string());
     let helper_url = create_rw_signal(initial_url);
-    let helper_enabled = create_rw_signal(helper_client::is_helper_available());
+    let is_available = helper_client::is_helper_available();
+    log::info!("UnlockDialog init: is_helper_available() = {}", is_available);
+    let helper_enabled = create_rw_signal(is_available);
 
     let password_input_ref = create_node_ref::<leptos::html::Input>();
 

@@ -236,14 +236,23 @@ pub const DEFAULT_HELPER_URL: &str = "http://127.0.0.1:8081";
 /// Attempt to auto-connect to the default helper server
 /// Returns true if connection was successful
 pub async fn try_auto_connect() -> bool {
+    log::info!("Attempting auto-connect to helper at {}", DEFAULT_HELPER_URL);
     let client = HelperClient::new(DEFAULT_HELPER_URL);
     match client.health_check().await {
         Ok(true) => {
+            log::info!("Auto-connect succeeded");
             configure_helper(DEFAULT_HELPER_URL);
             HELPER_AVAILABLE.with(|a| *a.borrow_mut() = Some(true));
             true
         }
-        _ => false,
+        Ok(false) => {
+            log::info!("Auto-connect: server responded but not healthy");
+            false
+        }
+        Err(e) => {
+            log::info!("Auto-connect failed: {}", e);
+            false
+        }
     }
 }
 
