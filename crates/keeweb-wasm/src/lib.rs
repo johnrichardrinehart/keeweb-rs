@@ -607,6 +607,9 @@ struct SimpleEntry {
     parent_group: Option<String>,
     /// TOTP/OTP configuration (otpauth:// URI or bare secret)
     otp: Option<String>,
+    /// Custom attributes (non-standard String fields)
+    #[serde(default)]
+    custom_attributes: HashMap<String, String>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     history: Vec<HistoryEntry>,
@@ -802,6 +805,12 @@ fn find_elements(xml: &str, tag: &str) -> Vec<String> {
     results
 }
 
+/// Standard KeePass field names that should not be included in custom_attributes
+const STANDARD_FIELDS: &[&str] = &["Title", "UserName", "Password", "URL", "Notes"];
+
+/// OTP-related field names (handled separately)
+const OTP_FIELDS: &[&str] = &["otp", "OTP", "TOTP Seed", "TOTP", "totp"];
+
 fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     // Extract the part before <History> to parse the main entry data
     // Also extract the History section separately to parse historical versions
@@ -827,6 +836,9 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         .or_else(|| extract_string_value(xml_to_parse, "TOTP"))
         .or_else(|| extract_string_value(xml_to_parse, "totp"));
 
+    // Extract custom attributes (all String fields that aren't standard or OTP fields)
+    let custom_attributes = extract_custom_attributes(xml_to_parse);
+
     // Parse history entries
     let history = if let Some(hist_xml) = history_xml {
         parse_history_entries(hist_xml)
@@ -843,8 +855,57 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         notes,
         parent_group: None, // TODO: track parent
         otp,
+        custom_attributes,
         history,
     })
+}
+
+/// Extract all custom attributes from an entry's XML
+fn extract_custom_attributes(xml: &str) -> HashMap<String, String> {
+    let mut attributes = HashMap::new();
+
+    // Find all <String> elements
+    for string_elem in find_elements(xml, "String") {
+        // Extract the key name
+        if let Some(key) = extract_tag_value(&string_elem, "Key") {
+            // Skip standard fields and OTP fields
+            if STANDARD_FIELDS.contains(&key.as_str()) || OTP_FIELDS.contains(&key.as_str()) {
+                continue;
+            }
+
+            // Extract the value
+            if let Some(value) = extract_string_value_from_string_elem(&string_elem) {
+                if !value.is_empty() {
+                    attributes.insert(key, value);
+                }
+            }
+        }
+    }
+
+    attributes
+}
+
+/// Extract value from a <String> element (handles both protected and unprotected values)
+fn extract_string_value_from_string_elem(string_elem: &str) -> Option<String> {
+    // Find <Value or <Value Protected="True"> in the element
+    let value_tag_start = string_elem.find("<Value")?;
+    let value_tag_area = &string_elem[value_tag_start..];
+
+    // Find the closing > of the Value tag
+    let value_tag_end = value_tag_area.find('>')?;
+    let content_start = value_tag_end + 1;
+
+    // Find </Value>
+    let content_end = value_tag_area.find("</Value>")?;
+
+    // Extract the content between > and </Value>
+    let value = &value_tag_area[content_start..content_end];
+
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 /// Parse historical entry versions from a <History>...</History> block

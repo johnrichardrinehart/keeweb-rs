@@ -1,6 +1,7 @@
 //! Entry detail/editor component
 
 use leptos::*;
+use std::collections::HashMap;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::password_generator::PasswordGenerator;
@@ -33,6 +34,7 @@ pub fn EntryDetail() -> impl IntoView {
                         let url = e.url.clone();
                         let notes = e.notes.clone();
                         let otp = e.otp.clone();
+                        let custom_attributes = e.custom_attributes.clone();
                         let history = e.history.clone();
                         let url_for_link = url.clone();
                         let url_is_empty = url.is_empty();
@@ -47,6 +49,7 @@ pub fn EntryDetail() -> impl IntoView {
                                 url_is_empty=url_is_empty
                                 notes=notes
                                 otp=otp
+                                custom_attributes=custom_attributes
                                 history=history
                                 show_password=show_password
                                 show_generator=show_generator
@@ -72,6 +75,7 @@ fn EntryDetailContent(
     url_is_empty: bool,
     notes: String,
     otp: Option<String>,
+    custom_attributes: HashMap<String, String>,
     history: Vec<HistoryEntryInfo>,
     show_password: RwSignal<bool>,
     show_generator: RwSignal<bool>,
@@ -258,6 +262,61 @@ fn EntryDetailContent(
                     readonly=true
                 >{notes}</textarea>
             </div>
+
+            // Custom attributes section
+            {if !custom_attributes.is_empty() {
+                let mut attrs: Vec<_> = custom_attributes.into_iter().collect();
+                attrs.sort_by(|a, b| a.0.cmp(&b.0)); // Sort alphabetically by key
+
+                view! {
+                    <div class="custom-attributes-section">
+                        <h3 class="section-header">"Custom Attributes"</h3>
+                        {attrs.into_iter().map(|(key, value)| {
+                            let key_for_copy = key.clone();
+                            let value_for_copy = value.clone();
+                            let copied = copied_field;
+
+                            let copy_value = move |_| {
+                                let val = value_for_copy.clone();
+                                let key = key_for_copy.clone();
+                                spawn_local(async move {
+                                    if clipboard::copy_to_clipboard(&val).await.is_ok() {
+                                        copied.set(Some(format!("attr_{}", key)));
+                                        set_timeout(move || copied.set(None), std::time::Duration::from_secs(2));
+                                    }
+                                });
+                            };
+
+                            let key_display = key.clone();
+                            let key_for_check = key.clone();
+
+                            view! {
+                                <div class="field-group">
+                                    <label>{key_display}</label>
+                                    <div class="field-value-row">
+                                        <input
+                                            type="text"
+                                            class="field-input"
+                                            value=value
+                                            readonly=true
+                                        />
+                                        <button
+                                            class="btn-icon"
+                                            class:copied=move || copied_field.get() == Some(format!("attr_{}", key_for_check))
+                                            on:click=copy_value
+                                            title="Copy value"
+                                        >
+                                            <CopyIcon />
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        }).collect_view()}
+                    </div>
+                }.into_view()
+            } else {
+                view! { <span></span> }.into_view()
+            }}
         </div>
 
         <div class="entry-detail-footer">

@@ -272,6 +272,9 @@ pub struct EntryInfo {
     /// TOTP/OTP configuration (otpauth:// URI or bare secret)
     #[serde(default)]
     pub otp: Option<String>,
+    /// Custom attributes (non-standard String fields)
+    #[serde(default)]
+    pub custom_attributes: std::collections::HashMap<String, String>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     pub history: Vec<HistoryEntryInfo>,

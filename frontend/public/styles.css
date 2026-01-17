@@ -1068,3 +1068,19 @@ html, body {
     width: 14px;
     height: 14px;
 }
+
+/* Custom Attributes Section */
+.custom-attributes-section {
+    margin-top: var(--spacing-lg);
+    padding-top: var(--spacing-lg);
+    border-top: 1px solid var(--color-border);
+}
+
+.section-header {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-md);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
