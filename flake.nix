@@ -119,7 +119,12 @@
             };
           };
 
-          keeweb-frontend = pkgs.stdenv.mkDerivation {
+          keeweb-frontend = let
+            # Create vendored cargo dependencies
+            cargoVendorDir = pkgs.rustPlatform.importCargoLock {
+              lockFile = ./Cargo.lock;
+            };
+          in pkgs.stdenv.mkDerivation {
             pname = "keeweb-frontend";
             version = "0.1.0";
             src = ./.;
@@ -135,6 +140,17 @@
 
             buildPhase = ''
               export HOME=$(mktemp -d)
+
+              # Set up vendored dependencies for cargo
+              mkdir -p .cargo
+              cat > .cargo/config.toml << EOF
+              [source.crates-io]
+              replace-with = "vendored-sources"
+
+              [source.vendored-sources]
+              directory = "${cargoVendorDir}"
+              EOF
+
               cd frontend
               trunk build --release --public-url /keeweb-rs/
             '';
