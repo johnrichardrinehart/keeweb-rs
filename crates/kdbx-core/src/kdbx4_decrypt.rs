@@ -41,6 +41,16 @@ const KDF_UUID_ARGON2ID: [u8; 16] = [
     0xb2, 0x3d, 0xfc, 0x3e, 0xc6, 0xf0, 0xa1, 0xe6,
 ];
 
+// Cipher UUIDs
+const CIPHER_AES256_CBC: [u8; 16] = [
+    0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50,
+    0xbe, 0x58, 0x05, 0x21, 0x6a, 0xfc, 0x5a, 0xff,
+];
+const CIPHER_CHACHA20_POLY1305: [u8; 16] = [
+    0xd6, 0x03, 0x8a, 0x2b, 0x8b, 0x6f, 0x4c, 0xb5,
+    0xa5, 0x24, 0x33, 0x9a, 0x31, 0xdb, 0xb5, 0x9a,
+];
+
 /// KDF parameters extracted from KDBX4 header
 #[derive(Debug, Clone)]
 pub struct KdfParams {
@@ -58,6 +68,12 @@ pub enum KdfType {
     Argon2id,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CipherType {
+    Aes256Cbc,
+    ChaCha20Poly1305,
+}
+
 /// Parsed KDBX4 header information
 #[derive(Debug)]
 pub struct Kdbx4Header {
@@ -65,6 +81,7 @@ pub struct Kdbx4Header {
     pub master_seed: Vec<u8>,
     pub encryption_iv: Vec<u8>,
     pub compression: bool,
+    pub cipher_type: CipherType,
     pub header_data: Vec<u8>,
     pub header_end_pos: usize,
 }
@@ -99,6 +116,7 @@ pub fn parse_kdbx4_header(data: &[u8]) -> Result<Kdbx4Header> {
     let mut encryption_iv = None;
     let mut kdf_params = None;
     let mut compression = false;
+    let mut cipher_type = CipherType::Aes256Cbc; // Default
 
     // Parse header fields
     loop {
@@ -128,8 +146,14 @@ pub fn parse_kdbx4_header(data: &[u8]) -> Result<Kdbx4Header> {
                 kdf_params = Some(parse_kdf_params(field_data)?);
             }
             HEADER_CIPHER_ID => {
-                // We only support AES-256 for now
-                // UUID: 31c1f2e6-bf71-4350-be58-05216afc5aff
+                if field_data.len() >= 16 {
+                    if field_data[..16] == CIPHER_CHACHA20_POLY1305 {
+                        cipher_type = CipherType::ChaCha20Poly1305;
+                    } else if field_data[..16] == CIPHER_AES256_CBC {
+                        cipher_type = CipherType::Aes256Cbc;
+                    }
+                    // Unknown cipher will use default (AES-256-CBC)
+                }
             }
             _ => {} // Ignore unknown fields
         }
@@ -142,6 +166,7 @@ pub fn parse_kdbx4_header(data: &[u8]) -> Result<Kdbx4Header> {
         master_seed: master_seed.ok_or_else(|| Error::ParseError("Missing master seed".to_string()))?,
         encryption_iv: encryption_iv.ok_or_else(|| Error::ParseError("Missing encryption IV".to_string()))?,
         compression,
+        cipher_type,
         header_data,
         header_end_pos: pos,
     })
@@ -315,8 +340,15 @@ pub fn decrypt_kdbx4_with_key(
     // Read HMAC block stream
     let encrypted_payload = read_hmac_block_stream(&data[payload_start..], &hmac_key)?;
 
-    // Decrypt with AES-256-CBC
-    let decrypted = decrypt_aes256_cbc(&encrypted_payload, &master_key, &header.encryption_iv)?;
+    // Decrypt based on cipher type
+    let decrypted = match header.cipher_type {
+        CipherType::Aes256Cbc => {
+            decrypt_aes256_cbc(&encrypted_payload, &master_key, &header.encryption_iv)?
+        }
+        CipherType::ChaCha20Poly1305 => {
+            decrypt_chacha20_poly1305(&encrypted_payload, &master_key, &header.encryption_iv)?
+        }
+    };
 
     // Decompress if needed
     let xml_data = if header.compression {
@@ -395,6 +427,33 @@ fn decrypt_aes256_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
         .map_err(|_| Error::DecryptError("AES decryption failed".to_string()))?;
 
     Ok(decrypted.to_vec())
+}
+
+fn decrypt_chacha20_poly1305(data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
+    // KDBX4 uses ChaCha20 stream cipher (not the full AEAD mode)
+    // The HMAC block stream already provides integrity verification
+    // So we just need to apply the ChaCha20 keystream to decrypt
+    use chacha20::cipher::{KeyIvInit, StreamCipher};
+
+    if key.len() != 32 {
+        return Err(Error::DecryptError("ChaCha20 requires 32-byte key".to_string()));
+    }
+    if nonce.len() != 12 {
+        return Err(Error::DecryptError("ChaCha20 requires 12-byte nonce".to_string()));
+    }
+
+    // ChaCha20 uses 32-byte key and 12-byte nonce
+    let key_arr: [u8; 32] = key.try_into()
+        .map_err(|_| Error::DecryptError("Invalid key length".to_string()))?;
+    let nonce_arr: [u8; 12] = nonce.try_into()
+        .map_err(|_| Error::DecryptError("Invalid nonce length".to_string()))?;
+
+    let mut cipher = ChaCha20::new(&key_arr.into(), &nonce_arr.into());
+
+    let mut buffer = data.to_vec();
+    cipher.apply_keystream(&mut buffer);
+
+    Ok(buffer)
 }
 
 fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
@@ -500,49 +559,118 @@ impl ProtectedStreamCipher {
     }
 }
 
-/// Decrypt protected values in XML using ChaCha20
+/// Decrypt protected values in XML using ChaCha20 with proper XML parsing
 pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> {
-    let mut cipher = ProtectedStreamCipher::new(stream_key)?;
-    let mut result = xml.to_string();
-    let mut count = 0;
+    use quick_xml::events::{Event, BytesStart, BytesText};
+    use quick_xml::{Reader, Writer};
+    use std::io::Cursor;
 
-    // Find all Protected="True" values and decrypt them
-    // KeePass uses Protected="True" (capital T)
-    // Pattern: <Value Protected="True">base64data</Value>
+    let mut cipher = ProtectedStreamCipher::new(stream_key)?;
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false); // Preserve whitespace in text content
+
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut count = 0;
+    let mut in_protected_value = false;
 
     loop {
-        // Find Protected="True" case-insensitively
-        let lower = result.to_lowercase();
-        let Some(protected_pos) = lower.find("protected=\"true\"") else {
-            #[cfg(target_arch = "wasm32")]
-            web_sys::console::log_1(&format!("Decrypted {} protected values", count).into());
-            break;
-        };
-        count += 1;
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => {
+                let name = e.name();
+                if name.as_ref() == b"Value" {
+                    // Check for Protected="True" attribute
+                    let is_protected = e.attributes().any(|attr| {
+                        if let Ok(attr) = attr {
+                            attr.key.as_ref() == b"Protected" &&
+                            (attr.value.as_ref() == b"True" || attr.value.as_ref() == b"true")
+                        } else {
+                            false
+                        }
+                    });
 
-        // Find the closing > after Protected="True"
-        let Some(tag_end_rel) = result[protected_pos..].find('>') else {
-            break;
-        };
-        let value_start = protected_pos + tag_end_rel + 1;
+                    if is_protected {
+                        in_protected_value = true;
+                        count += 1;
+                        // Write the tag without the Protected attribute
+                        let mut new_elem = BytesStart::new("Value");
+                        writer.write_event(Event::Start(new_elem))
+                            .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
+                        continue;
+                    }
+                }
+                writer.write_event(Event::Start(e.clone()))
+                    .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
+            }
+            Ok(Event::Text(ref e)) => {
+                if in_protected_value {
+                    // Get the raw text content
+                    let raw_text = std::str::from_utf8(e.as_ref())
+                        .map_err(|e| Error::ParseError(format!("UTF-8 error: {}", e)))?;
+                    let base64_text = raw_text.trim();
 
-        let Some(relative_end) = result[value_start..].find("</Value>") else {
-            break;
-        };
-        let value_end = value_start + relative_end;
+                    if base64_text.is_empty() {
+                        // Empty protected value, just write empty text
+                        writer.write_event(Event::Text(BytesText::new("")))
+                            .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
+                    } else {
+                        // Decrypt the value
+                        let decrypted = cipher.decrypt(base64_text)?;
+                        // Escape the decrypted value for XML
+                        writer.write_event(Event::Text(BytesText::new(&decrypted)))
+                            .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
+                    }
+                } else {
+                    writer.write_event(Event::Text(e.clone()))
+                        .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                if e.name().as_ref() == b"Value" && in_protected_value {
+                    in_protected_value = false;
+                }
+                writer.write_event(Event::End(e.clone()))
+                    .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
+            }
+            Ok(Event::Empty(ref e)) => {
+                // Self-closing tag like <Value Protected="True"/>
+                let name = e.name();
+                if name.as_ref() == b"Value" {
+                    let is_protected = e.attributes().any(|attr| {
+                        if let Ok(attr) = attr {
+                            attr.key.as_ref() == b"Protected" &&
+                            (attr.value.as_ref() == b"True" || attr.value.as_ref() == b"true")
+                        } else {
+                            false
+                        }
+                    });
 
-        let base64_value = &result[value_start..value_end];
-
-        // Decrypt the value
-        let decrypted = cipher.decrypt(base64_value)?;
-
-        // Replace in the result - also remove the Protected="True" attribute
-        let tag_start = result[..protected_pos].rfind("<Value").unwrap_or(protected_pos);
-        let replacement = format!("<Value>{}</Value>", decrypted);
-        result.replace_range(tag_start..value_end + "</Value>".len(), &replacement);
+                    if is_protected {
+                        count += 1;
+                        // Write as <Value></Value> without Protected attribute
+                        let new_elem = BytesStart::new("Value");
+                        writer.write_event(Event::Empty(new_elem))
+                            .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
+                        continue;
+                    }
+                }
+                writer.write_event(Event::Empty(e.clone()))
+                    .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(e) => {
+                // Pass through all other events (comments, CData, etc.)
+                writer.write_event(e)
+                    .map_err(|err| Error::ParseError(format!("XML write error: {}", err)))?;
+            }
+            Err(e) => {
+                return Err(Error::ParseError(format!("XML parse error at position {}: {}", reader.error_position(), e)));
+            }
+        }
     }
 
-    Ok(result)
+    let result = writer.into_inner().into_inner();
+    String::from_utf8(result)
+        .map_err(|e| Error::ParseError(format!("UTF-8 conversion failed: {}", e)))
 }
 
 /// Decrypt KDBX4 database and return XML with decrypted protected values
@@ -602,8 +730,15 @@ pub fn decrypt_kdbx4_full(
     // Read HMAC block stream
     let encrypted_payload = read_hmac_block_stream(&data[payload_start..], &hmac_key)?;
 
-    // Decrypt with AES-256-CBC
-    let decrypted = decrypt_aes256_cbc(&encrypted_payload, &master_key, &header.encryption_iv)?;
+    // Decrypt based on cipher type
+    let decrypted = match header.cipher_type {
+        CipherType::Aes256Cbc => {
+            decrypt_aes256_cbc(&encrypted_payload, &master_key, &header.encryption_iv)?
+        }
+        CipherType::ChaCha20Poly1305 => {
+            decrypt_chacha20_poly1305(&encrypted_payload, &master_key, &header.encryption_iv)?
+        }
+    };
 
     // Decompress if needed
     let payload_data = if header.compression {
