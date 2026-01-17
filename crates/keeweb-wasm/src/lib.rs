@@ -635,6 +635,12 @@ struct SimpleEntry {
     /// Expiry time (if expires is true)
     #[serde(skip_serializing_if = "Option::is_none")]
     expiry_time: Option<String>,
+    /// Standard icon ID (0-68)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon_id: Option<u32>,
+    /// Custom icon UUID (for database-specific icons)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    custom_icon_uuid: Option<String>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     history: Vec<HistoryEntry>,
@@ -873,6 +879,11 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     // Extract expiry info from <Times> block
     let (expires, expiry_time) = extract_expiry_info(xml_to_parse);
 
+    // Extract icon info
+    let icon_id = extract_tag_value(xml_to_parse, "IconID")
+        .and_then(|s| s.parse().ok());
+    let custom_icon_uuid = extract_tag_value(xml_to_parse, "CustomIconUUID");
+
     // Parse history entries
     let history = if let Some(hist_xml) = history_xml {
         parse_history_entries(hist_xml)
@@ -894,6 +905,8 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         tags,
         expires,
         expiry_time,
+        icon_id,
+        custom_icon_uuid,
         history,
     })
 }

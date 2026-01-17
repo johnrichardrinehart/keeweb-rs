@@ -299,6 +299,10 @@ pub struct EntryInfo {
     pub expires: bool,
     /// Expiry time (if expires is true)
     pub expiry_time: Option<String>,
+    /// Standard icon ID (0-68)
+    pub icon_id: Option<u32>,
+    /// Custom icon UUID (for database-specific icons)
+    pub custom_icon_uuid: Option<String>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     pub history: Vec<HistoryEntryInfo>,
