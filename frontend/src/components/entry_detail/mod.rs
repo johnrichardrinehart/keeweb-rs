@@ -37,6 +37,8 @@ pub fn EntryDetail() -> impl IntoView {
                         let custom_attributes = e.custom_attributes.clone();
                         let attachments = e.attachments.clone();
                         let tags = e.tags.clone();
+                        let expires = e.expires;
+                        let expiry_time = e.expiry_time.clone();
                         let history = e.history.clone();
                         let url_for_link = url.clone();
                         let url_is_empty = url.is_empty();
@@ -54,6 +56,8 @@ pub fn EntryDetail() -> impl IntoView {
                                 custom_attributes=custom_attributes
                                 attachments=attachments
                                 tags=tags
+                                expires=expires
+                                expiry_time=expiry_time
                                 history=history
                                 show_password=show_password
                                 show_generator=show_generator
@@ -82,6 +86,8 @@ fn EntryDetailContent(
     custom_attributes: HashMap<String, String>,
     attachments: Vec<AttachmentInfo>,
     tags: Vec<String>,
+    expires: bool,
+    expiry_time: Option<String>,
     history: Vec<HistoryEntryInfo>,
     show_password: RwSignal<bool>,
     show_generator: RwSignal<bool>,
@@ -148,17 +154,31 @@ fn EntryDetailContent(
         <div class="entry-detail-header">
             <div class="entry-detail-title-row">
                 <h2>{title_for_header}</h2>
-                {if !tags.is_empty() {
-                    view! {
-                        <div class="tags-container">
-                            {tags.into_iter().map(|tag| {
-                                view! { <span class="tag">{tag}</span> }
-                            }).collect_view()}
-                        </div>
-                    }.into_view()
-                } else {
-                    view! { <span></span> }.into_view()
-                }}
+                <div class="entry-meta-row">
+                    {if !tags.is_empty() {
+                        view! {
+                            <div class="tags-container">
+                                {tags.into_iter().map(|tag| {
+                                    view! { <span class="tag">{tag}</span> }
+                                }).collect_view()}
+                            </div>
+                        }.into_view()
+                    } else {
+                        view! { <span></span> }.into_view()
+                    }}
+                    {if expires {
+                        let is_expired = is_entry_expired(&expiry_time);
+                        let expiry_display = format_expiry_time(&expiry_time);
+                        view! {
+                            <div class="expiry-badge" class:expired=is_expired>
+                                <ExpiryIcon />
+                                <span>{expiry_display}</span>
+                            </div>
+                        }.into_view()
+                    } else {
+                        view! { <span></span> }.into_view()
+                    }}
+                </div>
             </div>
             <button class="btn-icon" on:click=move |_| state.selected_entry.set(None) title="Close">
                 <svg viewBox="0 0 24 24" width="20" height="20">
@@ -480,6 +500,117 @@ fn AttachmentIcon() -> impl IntoView {
         <svg viewBox="0 0 24 24" width="18" height="18">
             <path fill="currentColor" d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/>
         </svg>
+    }
+}
+
+/// Expiry/clock icon
+#[component]
+fn ExpiryIcon() -> impl IntoView {
+    view! {
+        <svg viewBox="0 0 24 24" width="14" height="14">
+            <path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+        </svg>
+    }
+}
+
+/// Check if an entry is expired based on expiry time
+fn is_entry_expired(expiry_time: &Option<String>) -> bool {
+    if let Some(time_str) = expiry_time {
+        // Try to parse the timestamp and compare to now
+        let now_ms = js_sys::Date::now() as i64;
+        if let Some(expiry_ms) = parse_keepass_timestamp_entry(time_str) {
+            return expiry_ms < now_ms;
+        }
+    }
+    false
+}
+
+/// Format expiry time for display
+fn format_expiry_time(expiry_time: &Option<String>) -> String {
+    match expiry_time {
+        Some(time_str) => {
+            if let Some(expiry_ms) = parse_keepass_timestamp_entry(time_str) {
+                let now_ms = js_sys::Date::now() as i64;
+                if expiry_ms < now_ms {
+                    // Already expired
+                    let diff_ms = now_ms - expiry_ms;
+                    format!("Expired {}", format_relative_time_entry(diff_ms))
+                } else {
+                    // Will expire
+                    let diff_ms = expiry_ms - now_ms;
+                    format!("Expires in {}", format_time_remaining(diff_ms))
+                }
+            } else {
+                "Expires".to_string()
+            }
+        }
+        None => "Expires".to_string(),
+    }
+}
+
+/// Parse a KeePass timestamp to milliseconds since epoch
+fn parse_keepass_timestamp_entry(timestamp: &str) -> Option<i64> {
+    // Try ISO 8601 parsing first
+    let date = js_sys::Date::parse(timestamp);
+    if !date.is_nan() {
+        return Some(date as i64);
+    }
+
+    // Try base64-encoded binary timestamp
+    parse_base64_timestamp_entry(timestamp)
+}
+
+/// Parse a base64-encoded KeePass binary timestamp
+fn parse_base64_timestamp_entry(b64: &str) -> Option<i64> {
+    // This is a simplified implementation - reuse the one from history viewer
+    let bytes = base64_decode(b64)?;
+    if bytes.len() != 8 {
+        return None;
+    }
+
+    let seconds_since_year1 = i64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+
+    const SECONDS_FROM_YEAR1_TO_UNIX: i64 = 62135596800;
+    let unix_seconds = seconds_since_year1 - SECONDS_FROM_YEAR1_TO_UNIX;
+    Some(unix_seconds * 1000)
+}
+
+/// Format milliseconds as relative time (for expired entries)
+fn format_relative_time_entry(diff_ms: i64) -> String {
+    let seconds = diff_ms / 1000;
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+
+    if days > 0 {
+        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+    } else if hours > 0 {
+        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
+    } else if minutes > 0 {
+        format!("{} min{} ago", minutes, if minutes == 1 { "" } else { "s" })
+    } else {
+        "just now".to_string()
+    }
+}
+
+/// Format milliseconds as time remaining
+fn format_time_remaining(diff_ms: i64) -> String {
+    let seconds = diff_ms / 1000;
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+
+    if days > 0 {
+        format!("{} day{}", days, if days == 1 { "" } else { "s" })
+    } else if hours > 0 {
+        format!("{} hour{}", hours, if hours == 1 { "" } else { "s" })
+    } else if minutes > 0 {
+        format!("{} min{}", minutes, if minutes == 1 { "" } else { "s" })
+    } else {
+        "< 1 min".to_string()
     }
 }
 

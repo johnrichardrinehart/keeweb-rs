@@ -294,6 +294,11 @@ pub struct EntryInfo {
     /// Tags
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Whether the entry expires
+    #[serde(default)]
+    pub expires: bool,
+    /// Expiry time (if expires is true)
+    pub expiry_time: Option<String>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     pub history: Vec<HistoryEntryInfo>,

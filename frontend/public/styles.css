@@ -1157,3 +1157,32 @@ html, body {
     border-radius: 9999px;
     text-transform: lowercase;
 }
+
+/* Entry meta row (tags + expiry) */
+.entry-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+/* Expiry badge */
+.expiry-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    background-color: var(--color-warning);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 500;
+    border-radius: 9999px;
+}
+
+.expiry-badge.expired {
+    background-color: var(--color-danger);
+}
+
+.expiry-badge svg {
+    flex-shrink: 0;
+}

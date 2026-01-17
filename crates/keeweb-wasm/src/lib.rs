@@ -629,6 +629,12 @@ struct SimpleEntry {
     /// Tags (semicolon-separated in KDBX, parsed into list)
     #[serde(default)]
     tags: Vec<String>,
+    /// Whether the entry expires
+    #[serde(default)]
+    expires: bool,
+    /// Expiry time (if expires is true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expiry_time: Option<String>,
     /// Historical versions of this entry (oldest first)
     #[serde(default)]
     history: Vec<HistoryEntry>,
@@ -864,6 +870,9 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     // Extract tags (semicolon-separated in <Tags> element)
     let tags = extract_tags(xml_to_parse);
 
+    // Extract expiry info from <Times> block
+    let (expires, expiry_time) = extract_expiry_info(xml_to_parse);
+
     // Parse history entries
     let history = if let Some(hist_xml) = history_xml {
         parse_history_entries(hist_xml)
@@ -883,8 +892,27 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         custom_attributes,
         attachments,
         tags,
+        expires,
+        expiry_time,
         history,
     })
+}
+
+/// Extract expiry information from entry's Times block
+fn extract_expiry_info(xml: &str) -> (bool, Option<String>) {
+    // Look for <Expires>True</Expires> or <Expires>False</Expires>
+    let expires = extract_tag_value(xml, "Expires")
+        .map(|s| s.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    // Extract expiry time if entry expires
+    let expiry_time = if expires {
+        extract_tag_value(xml, "ExpiryTime")
+    } else {
+        None
+    };
+
+    (expires, expiry_time)
 }
 
 /// Extract tags from the <Tags> element (semicolon-separated)
