@@ -15,6 +15,7 @@ use axum::{Router, routing::{get, post}};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::state::AppState;
@@ -61,7 +62,8 @@ async fn main() -> anyhow::Result<()> {
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any),
-        );
+        )
+        .layer(TraceLayer::new_for_http());
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
