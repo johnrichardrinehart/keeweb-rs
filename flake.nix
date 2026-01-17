@@ -124,6 +124,24 @@
             cargoVendorDir = pkgs.rustPlatform.importCargoLock {
               lockFile = ./Cargo.lock;
             };
+
+            # Build wasm-bindgen-cli at the exact version needed
+            wasmBindgenCli = pkgs.rustPlatform.buildRustPackage rec {
+              pname = "wasm-bindgen-cli";
+              version = "0.2.108";
+
+              src = pkgs.fetchCrate {
+                inherit pname version;
+                hash = "sha256-UsuxILm1G6PkmVw0I/JF12CRltAfCJQFOaT4hFwvR8E=";
+              };
+
+              cargoHash = "sha256-iqQiWbsKlLBiJFeqIYiXo3cqxGLSjNM8SOWXGM9u43E=";
+
+              nativeBuildInputs = [pkgs.pkg-config];
+              buildInputs = [pkgs.openssl] ++ lib.optionals pkgs.stdenv.isDarwin [
+                pkgs.darwin.apple_sdk.frameworks.Security
+              ];
+            };
           in pkgs.stdenv.mkDerivation {
             pname = "keeweb-frontend";
             version = "0.1.0";
@@ -133,8 +151,9 @@
               nativeBuildInputs
               ++ [
                 pkgs.trunk
-                pkgs.wasm-bindgen-cli
+                wasmBindgenCli
                 pkgs.binaryen
+                pkgs.wasm-pack
               ];
             inherit buildInputs;
 
@@ -151,6 +170,10 @@
               directory = "${cargoVendorDir}"
               EOF
 
+              # Build the keeweb-wasm crate first
+              echo "Building keeweb-wasm..."
+              wasm-pack build crates/keeweb-wasm --target web --out-dir ../../frontend/public/wasm --mode no-install
+
               # Create a Trunk.toml that uses the system wasm-bindgen version
               # trunk looks for wasm-bindgen in PATH when --offline is used
               cd frontend
@@ -158,6 +181,10 @@
               # Get the version of wasm-bindgen-cli we have
               WASM_BINDGEN_VERSION=$(wasm-bindgen --version | cut -d' ' -f2)
               echo "Using system wasm-bindgen version: $WASM_BINDGEN_VERSION"
+
+              # Get the wasm-opt version (binaryen)
+              WASM_OPT_VERSION=$(wasm-opt --version | grep -oP 'version \K\d+')
+              echo "Using system wasm-opt version: $WASM_OPT_VERSION"
 
               # Create Trunk.toml with matching version to prevent download
               cat > Trunk.toml << TOML
@@ -167,7 +194,7 @@
 
               [tools]
               wasm_bindgen = "$WASM_BINDGEN_VERSION"
-              wasm_opt = "version_123"
+              wasm_opt = "version_$WASM_OPT_VERSION"
 
               [watch]
               watch = ["src", "index.html", "public"]
