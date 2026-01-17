@@ -41,9 +41,8 @@ let getKdfParams = null;
 let decryptWithDerivedKey = null;
 let WasmDatabase = null;
 
-// Message ID counter for argon2 worker
-let argon2MsgId = 0;
-let argon2Pending = new Map();
+// Queue for argon2 worker responses (argon2 library doesn't echo back IDs)
+let argon2PendingQueue = [];
 
 // Argon2 Methods enum (from @very-amused/argon2-wasm)
 const Argon2Methods = {
@@ -54,43 +53,44 @@ const Argon2Methods = {
     Unload: 4
 };
 
-// Initialize argon2 worker with pthread support
-async function initArgon2Worker(baseUrl) {
+// Initialize argon2 worker with configurable pthread support
+// usePthread: true for multi-threaded (may deadlock with 1GB+ memory), false for SIMD-only
+async function initArgon2Worker(baseUrl, usePthread = true) {
     return new Promise((resolve, reject) => {
-        const workerUrl = baseUrl + '/argon2-pthread/build/worker.min.js';
-        console.log('[Worker] Loading argon2-pthread worker from:', workerUrl);
-
+        const workerUrl = baseUrl + '/argon2-pthread/build/worker.js';
         argon2Worker = new Worker(workerUrl);
 
+        // argon2 library doesn't echo back IDs, so we use a queue
         argon2Worker.onmessage = (event) => {
-            const { id, code, body } = event.data;
-            const pending = argon2Pending.get(id);
+            const { code, body, message } = event.data;
+            const pending = argon2PendingQueue.shift();
             if (pending) {
-                argon2Pending.delete(id);
                 if (code === 0) {
                     pending.resolve(body);
                 } else {
-                    pending.reject(new Error('Argon2 error code: ' + code));
+                    pending.reject(new Error(message || 'Argon2 error code: ' + code));
                 }
             }
         };
 
         argon2Worker.onerror = (e) => {
-            console.error('[Worker] Argon2 worker error:', e);
+            const pending = argon2PendingQueue.shift();
+            if (pending) {
+                pending.reject(e);
+            }
             reject(e);
         };
 
-        // Load argon2 WASM with SIMD and pthread support
-        const loadId = argon2MsgId++;
-        argon2Pending.set(loadId, { resolve, reject });
+        // Queue the load request
+        argon2PendingQueue.push({ resolve, reject });
 
+        // Load argon2 WASM - SIMD always enabled, pthread configurable
         argon2Worker.postMessage({
-            id: loadId,
             method: Argon2Methods.LoadArgon2,
             params: {
                 wasmRoot: baseUrl + '/argon2-pthread/build',
                 simd: true,
-                pthread: true
+                pthread: usePthread
             }
         });
     });
@@ -99,14 +99,13 @@ async function initArgon2Worker(baseUrl) {
 // Run argon2 hash via the pthread worker
 async function runArgon2(type, password, salt, timeCost, memoryCost, threads, hashLen) {
     return new Promise((resolve, reject) => {
-        const id = argon2MsgId++;
-        argon2Pending.set(id, { resolve, reject });
+        // Queue the hash request
+        argon2PendingQueue.push({ resolve, reject });
 
         // Select method based on type (0=2d, 2=2id)
         const method = type === 0 ? Argon2Methods.Hash2d : Argon2Methods.Hash2id;
 
         argon2Worker.postMessage({
-            id,
             method,
             params: {
                 password,
@@ -129,7 +128,6 @@ async function initKeewebWasm() {
     try {
         const jsUrl = baseUrl + '/wasm/keeweb_wasm.js';
         const wasmUrl = baseUrl + '/wasm/keeweb_wasm_bg.wasm';
-        console.log('[Worker] Loading keeweb-wasm from:', jsUrl);
 
         const module = await import(jsUrl);
         wasmModule = await module.default(wasmUrl);
@@ -137,16 +135,30 @@ async function initKeewebWasm() {
         getKdfParams = module.getKdfParams;
         decryptWithDerivedKey = module.decryptWithDerivedKey;
         WasmDatabase = module.WasmDatabase;
-        console.log('[Worker] keeweb-wasm loaded');
     } catch (e) {
-        console.error('[Worker] Failed to load keeweb-wasm:', e);
         throw e;
     }
 }
 
+// Track which argon2 mode is loaded
+let argon2Mode = null; // 'pthread' or 'simd'
+
 // Initialize WASM modules including argon2 (for unlock_fast)
-async function initWasm() {
-    if (wasmModule && argon2Ready) return;
+// usePthread: true for multi-threaded, false for SIMD-only (for high-memory databases)
+async function initWasm(usePthread = true) {
+    const targetMode = usePthread ? 'pthread' : 'simd';
+
+    // If argon2 is already loaded in the wrong mode, we need to recreate the worker
+    if (argon2Ready && argon2Mode !== targetMode) {
+        if (argon2Worker) {
+            argon2Worker.terminate();
+            argon2Worker = null;
+        }
+        argon2Ready = false;
+        argon2Mode = null;
+    }
+
+    if (wasmModule && argon2Ready && argon2Mode === targetMode) return;
 
     const baseUrl = self.location.origin;
 
@@ -154,15 +166,13 @@ async function initWasm() {
         // Load keeweb-wasm first
         await initKeewebWasm();
 
-        // Load argon2 pthread worker
+        // Load argon2 worker with appropriate mode
         if (!argon2Ready) {
-            console.log('[Worker] Loading argon2-pthread with SIMD and threading...');
-            await initArgon2Worker(baseUrl);
+            await initArgon2Worker(baseUrl, usePthread);
             argon2Ready = true;
-            console.log('[Worker] argon2-pthread loaded (SIMD + pthreads enabled)');
+            argon2Mode = targetMode;
         }
     } catch (e) {
-        console.error('[Worker] Failed to initialize:', e);
         throw e;
     }
 }
@@ -170,19 +180,23 @@ async function initWasm() {
 // Handle messages from main thread
 self.onmessage = async function(event) {
     const { type, id, payload } = event.data;
-    console.log('[Worker] Received message:', type, 'id:', id);
 
     try {
         switch (type) {
             case 'unlock':
-                // Standard unlock - needs keeweb-wasm only
+                // Standard unlock - needs keeweb-wasm only (uses rust-argon2, single-threaded)
                 await initKeewebWasm();
                 await handleUnlock(id, payload);
                 break;
             case 'unlock_fast':
-                // Fast unlock - needs both keeweb-wasm and argon2
-                await initWasm();
-                await handleUnlockFast(id, payload);
+                // Fast unlock with pthread - needs both keeweb-wasm and argon2 (SIMD+pthread)
+                await initWasm(true);
+                await handleUnlockFast(id, payload, 'pthread');
+                break;
+            case 'unlock_fast_simd':
+                // Fast unlock SIMD-only - for high-memory databases where pthread deadlocks
+                await initWasm(false);
+                await handleUnlockFast(id, payload, 'simd');
                 break;
             case 'decrypt_with_key':
                 // Decrypt with pre-computed key - only needs keeweb-wasm
@@ -197,7 +211,6 @@ self.onmessage = async function(event) {
                 });
         }
     } catch (e) {
-        console.error('[Worker] Error handling message:', e);
         self.postMessage({
             id,
             type: 'error',
@@ -206,10 +219,9 @@ self.onmessage = async function(event) {
     }
 };
 
-// Fast unlock using argon2-pthread with SIMD and multi-threading
-async function handleUnlockFast(id, { data, password }) {
-    console.log('[Worker] Starting FAST unlock (argon2-pthread SIMD+threads), data size:', data.length);
-
+// Fast unlock using argon2 with SIMD (and optionally multi-threading)
+// mode: 'pthread' for multi-threaded, 'simd' for SIMD-only
+async function handleUnlockFast(id, { data, password }, mode = 'pthread') {
     try {
         // Verify argon2 worker is ready
         if (!argon2Ready) {
@@ -217,22 +229,13 @@ async function handleUnlockFast(id, { data, password }) {
         }
 
         const dataArray = data instanceof Uint8Array ? data : new Uint8Array(data);
-        const totalStart = performance.now();
 
         // Step 1: Extract KDF parameters from KDBX header
-        console.log('[Worker] Extracting KDF parameters...');
-        const kdfStart = performance.now();
         const kdfParams = getKdfParams(dataArray, password);
-        console.log('[Worker] KDF params extracted in', (performance.now() - kdfStart).toFixed(0), 'ms');
-        console.log('[Worker] KDF:', kdfParams.kdfType, 'mem:', kdfParams.memoryKb, 'KB, iter:', kdfParams.iterations, ', parallel:', kdfParams.parallelism);
 
-        // Step 2: Run Argon2 with SIMD and pthreads
-        console.log('[Worker] Running Argon2 with', kdfParams.parallelism, 'threads (SIMD+pthread)...');
-        const argon2Start = performance.now();
-
+        // Step 2: Run Argon2 with SIMD (and pthreads if enabled)
         // argon2 type values: 0=Argon2d, 2=Argon2id
         const argon2Type = kdfParams.kdfType === 'argon2d' ? 0 : 2;
-        console.log('[Worker] Argon2 type:', argon2Type, '(0=d, 2=id)');
 
         // Get composite key and salt
         const compositeKey = new Uint8Array(kdfParams.compositeKey);
@@ -251,17 +254,8 @@ async function handleUnlockFast(id, { data, password }) {
 
         const argon2Result = { hash: new Uint8Array(hash) };
 
-        const argon2Elapsed = performance.now() - argon2Start;
-        console.log('[Worker] Argon2 SIMD completed in', argon2Elapsed.toFixed(0), 'ms');
-
         // Step 3: Decrypt database with derived key
-        console.log('[Worker] Decrypting database...');
-        const decryptStart = performance.now();
         const decryptResult = decryptWithDerivedKey(dataArray, password, argon2Result.hash);
-        console.log('[Worker] Decryption completed in', (performance.now() - decryptStart).toFixed(0), 'ms');
-
-        const totalElapsed = performance.now() - totalStart;
-        console.log('[Worker] FAST unlock total:', totalElapsed.toFixed(0), 'ms');
 
         self.postMessage({
             id,
@@ -273,8 +267,6 @@ async function handleUnlockFast(id, { data, password }) {
             }
         });
     } catch (e) {
-        console.error('[Worker] Fast unlock failed:', e);
-        console.log('[Worker] Falling back to standard unlock...');
         // Fall back to standard unlock
         await handleUnlock(id, { data, password });
     }
@@ -282,18 +274,9 @@ async function handleUnlockFast(id, { data, password }) {
 
 // Standard unlock (fallback, uses rust-argon2)
 async function handleUnlock(id, { data, password }) {
-    console.log('[Worker] Starting STANDARD unlock, data size:', data.length);
-
     try {
         const dataArray = data instanceof Uint8Array ? data : new Uint8Array(data);
-
-        console.log('[Worker] Opening database (rust-argon2)...');
-        const startTime = performance.now();
-
         const db = new WasmDatabase(dataArray, password);
-
-        const elapsed = performance.now() - startTime;
-        console.log('[Worker] Database opened in', elapsed.toFixed(0), 'ms');
 
         const entriesJson = db.getEntries();
         const groupsJson = db.getGroups();
@@ -311,7 +294,6 @@ async function handleUnlock(id, { data, password }) {
 
         self.currentDatabase = db;
     } catch (e) {
-        console.error('[Worker] Unlock failed:', e);
         self.postMessage({
             id,
             type: 'unlock_error',
@@ -322,19 +304,12 @@ async function handleUnlock(id, { data, password }) {
 
 // Decrypt with pre-computed key (from main thread parallel argon2)
 async function handleDecryptWithKey(id, { data, password, derivedKey }) {
-    console.log('[Worker] Decrypting with pre-computed key, data size:', data.length, 'key size:', derivedKey.length);
-
     try {
         const dataArray = data instanceof Uint8Array ? data : new Uint8Array(data);
         const keyArray = derivedKey instanceof Uint8Array ? derivedKey : new Uint8Array(derivedKey);
 
-        const startTime = performance.now();
-
         // Use the decryptWithDerivedKey function from keeweb-wasm
         const decryptResult = decryptWithDerivedKey(dataArray, password, keyArray);
-
-        const elapsed = performance.now() - startTime;
-        console.log('[Worker] Decryption completed in', elapsed.toFixed(0), 'ms');
 
         self.postMessage({
             id,
@@ -346,7 +321,6 @@ async function handleDecryptWithKey(id, { data, password, derivedKey }) {
             }
         });
     } catch (e) {
-        console.error('[Worker] Decrypt with key failed:', e);
         self.postMessage({
             id,
             type: 'unlock_error',
@@ -354,16 +328,12 @@ async function handleDecryptWithKey(id, { data, password, derivedKey }) {
         });
     }
 }
-
-console.log('[Worker] Worker script loaded (with parallel argon2 support)');
 "#.to_string()
 }
 
 impl WorkerClient {
     /// Create a new worker client
     pub fn new() -> Result<Self, JsValue> {
-        log::debug!("Creating worker client");
-
         // Create worker from inline script using Blob URL
         let script = create_worker_script();
         let blob_parts = Array::new();
@@ -374,8 +344,6 @@ impl WorkerClient {
 
         let blob = Blob::new_with_str_sequence_and_options(&blob_parts, &options)?;
         let url = Url::create_object_url_with_blob(&blob)?;
-
-        log::debug!("Created worker blob URL: {}", url);
 
         let mut worker_options = web_sys::WorkerOptions::new();
         worker_options.set_type(web_sys::WorkerType::Module);
@@ -399,8 +367,6 @@ impl WorkerClient {
             let msg_type = Reflect::get(&data, &"type".into())
                 .ok()
                 .and_then(|v| v.as_string());
-
-            log::debug!("Worker message received: type={:?}, id={:?}", msg_type, id);
 
             if let (Some(id), Some(msg_type)) = (id, msg_type) {
                 // Get the callback for this request
@@ -459,8 +425,6 @@ impl WorkerClient {
         worker.set_onerror(Some(onerror.as_ref().unchecked_ref()));
         onerror.forget();
 
-        log::debug!("Worker client created successfully");
-
         Ok(Self {
             worker,
             pending_requests,
@@ -468,7 +432,7 @@ impl WorkerClient {
         })
     }
 
-    /// Request database unlock in the worker (uses fast parallel argon2)
+    /// Request database unlock in the worker (uses fast parallel argon2 with SIMD+pthread)
     pub fn unlock<F>(&self, data: Vec<u8>, password: String, callback: F)
     where
         F: FnOnce(Result<UnlockResult, String>) + 'static,
@@ -476,8 +440,18 @@ impl WorkerClient {
         self.unlock_internal(data, password, "unlock_fast", callback);
     }
 
+    /// Request database unlock using SIMD-only argon2 (no pthreads)
+    /// Use this for high-memory databases (>=1GB) where pthread deadlocks
+    /// Still faster than single-threaded rust-argon2 due to SIMD
+    pub fn unlock_simd<F>(&self, data: Vec<u8>, password: String, callback: F)
+    where
+        F: FnOnce(Result<UnlockResult, String>) + 'static,
+    {
+        self.unlock_internal(data, password, "unlock_fast_simd", callback);
+    }
+
     /// Request database unlock using standard single-threaded Rust argon2
-    /// Use this for high-memory databases where parallel argon2 may fail
+    /// Slowest option, but most reliable fallback
     pub fn unlock_standard<F>(&self, data: Vec<u8>, password: String, callback: F)
     where
         F: FnOnce(Result<UnlockResult, String>) + 'static,
@@ -495,8 +469,6 @@ impl WorkerClient {
             *next += 1;
             id
         };
-
-        log::debug!("Sending {} request, id={}, data_len={}", unlock_type, id, data.len());
 
         // Store the callback
         self.pending_requests
@@ -543,8 +515,6 @@ impl WorkerClient {
             *next += 1;
             id
         };
-
-        log::debug!("Sending decrypt_with_key request, id={}, data_len={}, key_len={}", id, data.len(), derived_key.len());
 
         // Store the callback
         self.pending_requests

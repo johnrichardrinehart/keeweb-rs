@@ -3,9 +3,8 @@
 //! This crate provides JavaScript bindings for the kdbx-core and kdbx-diff crates,
 //! allowing them to be used in web browsers via WebAssembly.
 
-use kdbx_core::{Database, Entry, EntryBuilder, Group};
-use kdbx_core::{parse_kdbx4_header, compute_composite_key, KdfType};
-use kdbx_core::{TotpConfig, TotpAlgorithm};
+use kdbx_core::{compute_composite_key, parse_kdbx4_header, Database, Entry, EntryBuilder, Group, KdfType};
+use kdbx_core::{TotpAlgorithm, TotpConfig};
 use kdbx_diff::{DatabaseDiff, Merger, Resolution};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -382,14 +381,6 @@ pub fn decrypt_with_derived_key(
     let decrypted_xml = kdbx_core::decrypt_kdbx4_full(data, password, &key_arr)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    // Debug: check if Protected="True" exists in the decrypted XML
-    let protected_count = decrypted_xml.matches("Protected=\"True\"").count();
-    web_sys::console::log_1(&format!("XML contains {} Protected=\"True\" values after decryption", protected_count).into());
-
-    // Also check lowercase variant
-    let protected_count_lower = decrypted_xml.to_lowercase().matches("protected=\"true\"").count();
-    web_sys::console::log_1(&format!("XML contains {} protected=\"true\" (lowercase) values", protected_count_lower).into());
-
     // Parse the XML to extract entries and groups
     let (entries_json, groups_json, metadata_json) = parse_kdbx_xml(decrypted_xml.as_bytes())
         .map_err(|e| JsValue::from_str(&e))?;
@@ -564,8 +555,6 @@ fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
     let groups_json = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".to_string());
     let metadata_json = "{}".to_string(); // TODO: parse metadata
 
-    web_sys::console::log_1(&format!("Final: {} entries, {} groups", entries.len(), groups.len()).into());
-
     Ok((entries_json, groups_json, metadata_json))
 }
 
@@ -672,9 +661,6 @@ fn find_top_level_entries(xml: &str) -> Vec<String> {
 
                     if !is_inside_history {
                         let entry_xml = &xml[abs_start..abs_end];
-                        // Debug: check if this entry has history
-                        let has_history = entry_xml.contains("<History>");
-                        web_sys::console::log_1(&format!("Found top-level entry, has_history={}, len={}", has_history, entry_xml.len()).into());
                         results.push(entry_xml.to_string());
                     }
 
@@ -687,7 +673,6 @@ fn find_top_level_entries(xml: &str) -> Vec<String> {
         }
     }
 
-    web_sys::console::log_1(&format!("find_top_level_entries found {} entries", results.len()).into());
     results
 }
 
@@ -822,10 +807,8 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     let (xml_to_parse, history_xml) = if let Some(history_pos) = xml.find("<History>") {
         let history_end = xml.find("</History>").unwrap_or(xml.len());
         let hist_section = &xml[history_pos..history_end + "</History>".len()];
-        web_sys::console::log_1(&format!("Found History section at pos {}, len={}", history_pos, hist_section.len()).into());
         (&xml[..history_pos], Some(hist_section))
     } else {
-        web_sys::console::log_1(&"No <History> tag found in entry".into());
         (xml, None)
     };
 
@@ -841,9 +824,7 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
 
     // Parse history entries
     let history = if let Some(hist_xml) = history_xml {
-        let h = parse_history_entries(hist_xml);
-        web_sys::console::log_1(&format!("Parsed {} history entries", h.len()).into());
-        h
+        parse_history_entries(hist_xml)
     } else {
         Vec::new()
     };

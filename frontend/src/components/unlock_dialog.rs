@@ -3,6 +3,7 @@
 use leptos::*;
 use web_sys::KeyboardEvent;
 
+use crate::helper_client;
 use crate::state::{AppState, AppView};
 
 /// Unlock dialog component
@@ -14,8 +15,21 @@ pub fn UnlockDialog() -> impl IntoView {
     let error = create_rw_signal(Option::<String>::None);
     let is_unlocking = create_rw_signal(false);
     let show_password = create_rw_signal(false);
+    let show_helper_config = create_rw_signal(false);
+    let helper_url = create_rw_signal(String::from("http://localhost:8080"));
+    let helper_enabled = create_rw_signal(helper_client::is_helper_configured());
 
     let password_input_ref = create_node_ref::<leptos::html::Input>();
+
+    // Configure helper when URL changes and is enabled
+    let apply_helper_config = move || {
+        let url = helper_url.get();
+        if !url.is_empty() {
+            helper_client::configure_helper(&url);
+            helper_enabled.set(true);
+            log::info!("Helper server configured at: {}", url);
+        }
+    };
 
     // Focus password input on mount
     create_effect(move |_| {
@@ -134,6 +148,54 @@ pub fn UnlockDialog() -> impl IntoView {
                             </div>
                         </Show>
                     </form>
+
+                    // Helper server configuration section
+                    <div class="helper-config-section">
+                        <button
+                            type="button"
+                            class="helper-config-toggle"
+                            on:click=move |_| show_helper_config.update(|v| *v = !*v)
+                        >
+                            <svg viewBox="0 0 24 24" width="16" height="16" style="margin-right: 4px;">
+                                <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+                            </svg>
+                            {move || if show_helper_config.get() { "Hide unlock helper settings" } else { "Configure unlock helper (optional)" }}
+                        </button>
+
+                        <Show when=move || show_helper_config.get()>
+                            <div class="helper-config-panel">
+                                <p class="helper-description">
+                                    "For databases with high-memory Argon2 settings (1GB+), browser unlock can take ~30 seconds. "
+                                    "Running the keeweb-server locally provides native-speed unlock (~4s)."
+                                </p>
+                                <div class="form-group">
+                                    <label for="helper-url">"Helper Server URL"</label>
+                                    <div class="helper-url-input-wrapper">
+                                        <input
+                                            type="text"
+                                            id="helper-url"
+                                            class="form-input"
+                                            placeholder="http://localhost:8080"
+                                            prop:value=move || helper_url.get()
+                                            on:input=move |ev| helper_url.set(event_target_value(&ev))
+                                        />
+                                        <button
+                                            type="button"
+                                            class="btn btn-small"
+                                            on:click=move |_| apply_helper_config()
+                                        >
+                                            {move || if helper_enabled.get() { "Update" } else { "Enable" }}
+                                        </button>
+                                    </div>
+                                </div>
+                                <Show when=move || helper_enabled.get()>
+                                    <p class="helper-status helper-status-enabled">
+                                        "Helper enabled - high-memory databases will use native Argon2"
+                                    </p>
+                                </Show>
+                            </div>
+                        </Show>
+                    </div>
                 </div>
 
                 <div class="dialog-footer">
