@@ -401,13 +401,20 @@ impl AppState {
         let data_clone = data.clone();
 
         // Check if parallel argon2 is available
-        if is_argon2_ready() {
+        let argon2_ready = is_argon2_ready();
+        log::info!("unlock_database_async: is_argon2_ready() = {}", argon2_ready);
+
+        if argon2_ready {
 
             // Step 1: Extract KDF parameters from KDBX header
             let start_time = perf_now();
+            log::info!("Extracting KDF params...");
 
             let kdf_params = match keeweb_wasm::get_kdf_params(&data, &password_str) {
-                Ok(params) => params,
+                Ok(params) => {
+                    log::info!("KDF params extracted successfully");
+                    params
+                }
                 Err(e) => {
                     let err = e.as_string().unwrap_or_else(|| format!("{:?}", e));
                     log::error!("Failed to extract KDF params: {}", err);
