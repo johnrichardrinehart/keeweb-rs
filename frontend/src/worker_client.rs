@@ -27,12 +27,18 @@ pub struct WorkerClient {
 }
 
 /// Generate worker script that can load WASM dynamically
-fn create_worker_script() -> String {
+fn create_worker_script(base_url: &str) -> String {
     // The worker script as a string - loads keeweb-wasm and uses @very-amused/argon2-wasm for pthread support
     // Uses dynamic import() for ES modules since we're a module worker
-    r#"
+    // Base URL is injected to handle subpath deployments (e.g., GitHub Pages)
+    let mut script = String::from(r#"
 // Web Worker for KeeWeb-RS database operations
 // Uses @very-amused/argon2-wasm with pthread support for fast parallel key derivation
+
+// Base URL injected from main thread (handles subpath deployments like GitHub Pages)
+const BASE_URL = ""#);
+    script.push_str(base_url);
+    script.push_str(r#"";
 
 let wasmModule = null;
 let argon2Worker = null;
@@ -123,11 +129,9 @@ async function runArgon2(type, password, salt, timeCost, memoryCost, threads, ha
 async function initKeewebWasm() {
     if (wasmModule) return;
 
-    const baseUrl = self.location.origin;
-
     try {
-        const jsUrl = baseUrl + '/wasm/keeweb_wasm.js';
-        const wasmUrl = baseUrl + '/wasm/keeweb_wasm_bg.wasm';
+        const jsUrl = BASE_URL + '/wasm/keeweb_wasm.js';
+        const wasmUrl = BASE_URL + '/wasm/keeweb_wasm_bg.wasm';
 
         const module = await import(jsUrl);
         wasmModule = await module.default(wasmUrl);
@@ -160,15 +164,13 @@ async function initWasm(usePthread = true) {
 
     if (wasmModule && argon2Ready && argon2Mode === targetMode) return;
 
-    const baseUrl = self.location.origin;
-
     try {
         // Load keeweb-wasm first
         await initKeewebWasm();
 
         // Load argon2 worker with appropriate mode
         if (!argon2Ready) {
-            await initArgon2Worker(baseUrl, usePthread);
+            await initArgon2Worker(BASE_URL, usePthread);
             argon2Ready = true;
             argon2Mode = targetMode;
         }
@@ -328,14 +330,54 @@ async function handleDecryptWithKey(id, { data, password, derivedKey }) {
         });
     }
 }
-"#.to_string()
+"#);
+    script
+}
+
+/// Get the base URL for assets, handling subpath deployments (e.g., GitHub Pages)
+fn get_base_url() -> String {
+    let window = web_sys::window().expect("no window");
+    let location = window.location();
+    let origin = location.origin().unwrap_or_default();
+    let pathname = location.pathname().unwrap_or_default();
+
+    // For subpath deployments, we need to include the path up to the app root
+    // e.g., for https://user.github.io/repo-name/, we need /repo-name
+    // The pathname typically looks like /repo-name/ or /repo-name/index.html
+    // We want to extract just /repo-name (without trailing content after the last /)
+
+    // Find the base path - everything up to but not including the last segment
+    // unless it's just "/" in which case we use that
+    let base_path = if pathname == "/" {
+        String::new()
+    } else {
+        // Remove trailing slash if present, then find the last slash
+        let trimmed = pathname.trim_end_matches('/');
+        // For paths like /keeweb-rs or /keeweb-rs/some/page
+        // we want to keep everything - the app is served from the subpath root
+        // Check if there's an index.html or other file at the end
+        if trimmed.ends_with(".html") || trimmed.ends_with(".js") {
+            // Remove the filename to get the directory
+            if let Some(pos) = trimmed.rfind('/') {
+                trimmed[..pos].to_string()
+            } else {
+                String::new()
+            }
+        } else {
+            // No file extension, assume it's a directory path - keep it
+            trimmed.to_string()
+        }
+    };
+
+    format!("{}{}", origin, base_path)
 }
 
 impl WorkerClient {
     /// Create a new worker client
     pub fn new() -> Result<Self, JsValue> {
         // Create worker from inline script using Blob URL
-        let script = create_worker_script();
+        let base_url = get_base_url();
+        let script = create_worker_script(&base_url);
         let blob_parts = Array::new();
         blob_parts.push(&JsValue::from_str(&script));
 
