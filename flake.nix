@@ -151,8 +151,30 @@
               directory = "${cargoVendorDir}"
               EOF
 
+              # Create a Trunk.toml that uses the system wasm-bindgen version
+              # trunk looks for wasm-bindgen in PATH when --offline is used
               cd frontend
-              trunk build --release --public-url /keeweb-rs/
+
+              # Get the version of wasm-bindgen-cli we have
+              WASM_BINDGEN_VERSION=$(wasm-bindgen --version | cut -d' ' -f2)
+              echo "Using system wasm-bindgen version: $WASM_BINDGEN_VERSION"
+
+              # Create Trunk.toml with matching version to prevent download
+              cat > Trunk.toml << TOML
+              [build]
+              target = "index.html"
+              dist = "dist"
+
+              [tools]
+              wasm_bindgen = "$WASM_BINDGEN_VERSION"
+              wasm_opt = "version_123"
+
+              [watch]
+              watch = ["src", "index.html", "public"]
+              ignore = ["dist"]
+              TOML
+
+              trunk build --release --public-url /keeweb-rs/ --offline
             '';
 
             installPhase = ''
