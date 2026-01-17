@@ -13,6 +13,10 @@ use crate::state::{init_argon2, AppState, AppView};
 /// Root application component
 #[component]
 pub fn App() -> impl IntoView {
+    // Log git revision on startup
+    let git_rev = option_env!("GIT_REVISION").unwrap_or("unknown");
+    log::info!("keeweb-rs revision: {}", git_rev);
+
     // Create the global application state
     let state = AppState::new();
     provide_context(state);

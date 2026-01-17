@@ -160,6 +160,9 @@
             buildPhase = ''
               export HOME=$(mktemp -d)
 
+              # Set git revision for build info (use self.rev if available, otherwise "dirty")
+              export GIT_REVISION="${self.rev or "dirty"}"
+
               # Set up vendored dependencies for cargo
               mkdir -p .cargo
               cat > .cargo/config.toml << EOF
