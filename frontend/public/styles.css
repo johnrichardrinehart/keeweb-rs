@@ -1186,3 +1186,75 @@ html, body {
 .expiry-badge svg {
     flex-shrink: 0;
 }
+
+/* Auto-lock overlay and modal */
+.auto-lock-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn var(--transition-fast);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.auto-lock-modal {
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-xl);
+    text-align: center;
+    max-width: 320px;
+    width: 90%;
+    box-shadow: var(--shadow-lg);
+    animation: scaleIn var(--transition-fast);
+}
+
+@keyframes scaleIn {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+.auto-lock-icon {
+    color: var(--color-warning);
+    margin-bottom: var(--spacing-md);
+}
+
+.auto-lock-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: var(--spacing-sm);
+}
+
+.auto-lock-message {
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    margin-bottom: var(--spacing-md);
+}
+
+.auto-lock-countdown {
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--color-warning);
+    line-height: 1;
+    margin-bottom: var(--spacing-xs);
+}
+
+.auto-lock-unit {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--spacing-lg);
+}
+
+.auto-lock-button {
+    width: 100%;
+}

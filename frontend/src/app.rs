@@ -4,8 +4,8 @@ use leptos::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::{
-    entry_detail::EntryDetail, entry_list::EntryList, file_picker::FilePicker, sidebar::Sidebar,
-    unlock_dialog::UnlockDialog,
+    auto_lock::AutoLock, entry_detail::EntryDetail, entry_list::EntryList,
+    file_picker::FilePicker, sidebar::Sidebar, unlock_dialog::UnlockDialog,
 };
 use crate::helper_client;
 use crate::state::{init_argon2, AppState, AppView};
@@ -60,6 +60,9 @@ pub fn App() -> impl IntoView {
                 <Show when=move || state.current_view.get() == AppView::Unlock>
                     <UnlockDialog />
                 </Show>
+
+                // Auto-lock countdown modal
+                <AutoLock />
             </main>
         </div>
     }
