@@ -433,7 +433,10 @@ impl AppState {
                 let version = kdf_params.version();
 
                 // Try helper server first if configured
-                if helper_client::is_helper_configured() {
+                let helper_configured = helper_client::is_helper_configured();
+                log::info!("High memory ({}MB) database - helper configured: {}", memory_mb, helper_configured);
+
+                if helper_configured {
                     let argon2_type_clone = argon2_type.clone();
                     let composite_key_clone = composite_key.clone();
                     let salt_clone = salt.clone();
@@ -441,9 +444,10 @@ impl AppState {
                     let password_for_helper = password_str.clone();
 
                     spawn_local(async move {
+                        log::info!("Checking helper availability...");
                         match helper_client::check_helper_available().await {
                             Ok(true) => {
-
+                                log::info!("Helper available, calling argon2_hash...");
                                 match helper_client::helper_argon2_hash(
                                     &argon2_type_clone,
                                     &composite_key_clone,
@@ -502,8 +506,9 @@ impl AppState {
                                             },
                                         );
                                     }
-                                    Err(_) => {
+                                    Err(e) => {
                                         // Fall back to single-threaded
+                                        log::warn!("Helper argon2 failed: {:?}, falling back to slow unlock", e);
                                         do_slow_unlock(
                                             data_for_helper,
                                             password_for_helper,
@@ -516,7 +521,20 @@ impl AppState {
                                     }
                                 }
                             }
-                            Ok(false) | Err(_) => {
+                            Ok(false) => {
+                                log::info!("Helper not available (check returned false), falling back to slow unlock");
+                                do_slow_unlock(
+                                    data_for_helper,
+                                    password_for_helper,
+                                    state,
+                                    start_time,
+                                    error_signal,
+                                    is_unlocking,
+                                    memory_mb,
+                                );
+                            }
+                            Err(e) => {
+                                log::warn!("Helper check failed: {}, falling back to slow unlock", e);
                                 do_slow_unlock(
                                     data_for_helper,
                                     password_for_helper,
@@ -533,6 +551,7 @@ impl AppState {
                 }
 
                 // No helper configured, use slow fallback
+                log::info!("No helper configured, using slow fallback");
                 do_slow_unlock(
                     data_clone,
                     password_str.clone(),
