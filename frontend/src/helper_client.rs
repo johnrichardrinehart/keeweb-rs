@@ -70,15 +70,15 @@ impl HelperClient {
         opts.set_mode(RequestMode::Cors);
 
         let request = Request::new_with_str_and_init(&url, &opts)
-            .map_err(|e| format!("Failed to create request: {:?}", e))?;
+            .map_err(|_| "Failed to create request".to_string())?;
 
         let resp_value = JsFuture::from(window.fetch_with_request(&request))
             .await
-            .map_err(|e| format!("Fetch failed: {:?}", e))?;
+            .map_err(|_| "Fetch failed".to_string())?;
 
         let resp: Response = resp_value
             .dyn_into()
-            .map_err(|_| "Response is not a Response object")?;
+            .map_err(|_| "Response is not a Response object".to_string())?;
 
         Ok(resp.ok())
     }
