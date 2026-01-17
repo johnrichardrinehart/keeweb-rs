@@ -1,11 +1,13 @@
 //! Main application component
 
 use leptos::*;
+use wasm_bindgen_futures::spawn_local;
 
 use crate::components::{
     entry_detail::EntryDetail, entry_list::EntryList, file_picker::FilePicker, sidebar::Sidebar,
     unlock_dialog::UnlockDialog,
 };
+use crate::helper_client;
 use crate::state::{init_argon2, AppState, AppView};
 
 /// Root application component
@@ -20,8 +22,22 @@ pub fn App() -> impl IntoView {
     // before this code runs, so is_rayon_ready() will return true if it succeeded
     init_argon2(|result| {
         match result {
-            Ok(()) => log::info!("Argon2-pthread initialized (parallel KDF ready)"),
-            Err(e) => log::warn!("Argon2-pthread init failed: {} (will use fallback)", e),
+            Ok(()) => {
+                #[cfg(debug_assertions)]
+                log::info!("Argon2-pthread initialized (parallel KDF ready)");
+            }
+            Err(_e) => {
+                #[cfg(debug_assertions)]
+                log::warn!("Argon2-pthread init failed: {} (will use fallback)", _e);
+            }
+        }
+    });
+
+    // Try to auto-connect to helper server on localhost:8081
+    spawn_local(async {
+        if helper_client::try_auto_connect().await {
+            #[cfg(debug_assertions)]
+            log::info!("Auto-connected to helper server at {}", helper_client::DEFAULT_HELPER_URL);
         }
     });
 

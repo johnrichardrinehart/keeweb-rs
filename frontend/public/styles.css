@@ -329,6 +329,67 @@ html, body {
     border-top: 1px solid var(--color-border);
 }
 
+/* Helper server config */
+.helper-config-section {
+    margin-top: var(--spacing-lg);
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+}
+
+.helper-config-toggle {
+    display: flex;
+    align-items: center;
+    background: transparent;
+    border: none;
+    color: var(--color-text-secondary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: var(--spacing-xs) 0;
+}
+
+.helper-config-toggle:hover {
+    color: var(--color-text);
+}
+
+.helper-status-indicator {
+    font-weight: bold;
+}
+
+.helper-status-connected {
+    color: var(--color-success, #22c55e);
+}
+
+.helper-config-panel {
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-md);
+    background-color: var(--color-surface);
+    border-radius: var(--radius-md);
+}
+
+.helper-description {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-md);
+}
+
+.helper-url-input-wrapper {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.helper-url-input-wrapper .form-input {
+    flex: 1;
+}
+
+.helper-status {
+    font-size: 0.8rem;
+    margin-top: var(--spacing-sm);
+}
+
+.helper-status-enabled {
+    color: var(--color-success, #22c55e);
+}
+
 /* Form elements */
 .form-group {
     margin-bottom: var(--spacing-md);

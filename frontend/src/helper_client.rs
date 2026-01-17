@@ -224,6 +224,40 @@ pub async fn check_helper_available() -> Result<bool, String> {
     }
 }
 
+/// Default helper server URL
+pub const DEFAULT_HELPER_URL: &str = "http://127.0.0.1:8081";
+
+/// Attempt to auto-connect to the default helper server
+/// Returns true if connection was successful
+pub async fn try_auto_connect() -> bool {
+    let client = HelperClient::new(DEFAULT_HELPER_URL);
+    match client.health_check().await {
+        Ok(true) => {
+            configure_helper(DEFAULT_HELPER_URL);
+            HELPER_AVAILABLE.with(|a| *a.borrow_mut() = Some(true));
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Disable the helper server
+pub fn disable_helper() {
+    HELPER_CLIENT.with(|client| {
+        *client.borrow_mut() = None;
+    });
+    HELPER_AVAILABLE.with(|available| {
+        *available.borrow_mut() = Some(false);
+    });
+}
+
+/// Get the currently configured helper URL (if any)
+pub fn get_helper_url() -> Option<String> {
+    HELPER_CLIENT.with(|client| {
+        client.borrow().as_ref().map(|c| c.base_url.clone())
+    })
+}
+
 /// Compute Argon2 hash using the helper server (if available)
 pub async fn helper_argon2_hash(
     variant: &str,
