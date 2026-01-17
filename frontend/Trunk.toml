@@ -1,6 +1,9 @@
 [build]
 target = "index.html"
 dist = "dist"
+# For GitHub Pages deployment, set public_url to the repo name
+# Uncomment and adjust for your repository:
+# public_url = "/keeweb-rs/"
 
 [watch]
 watch = ["src", "index.html", "public"]

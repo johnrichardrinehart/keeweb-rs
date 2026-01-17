@@ -136,12 +136,14 @@
             buildPhase = ''
               export HOME=$(mktemp -d)
               cd frontend
-              trunk build --release
+              trunk build --release --public-url /keeweb-rs/
             '';
 
             installPhase = ''
               mkdir -p $out
               cp -r dist/* $out/
+              # Add .nojekyll to prevent GitHub Pages from ignoring _files
+              touch $out/.nojekyll
             '';
 
             meta = with lib; {
