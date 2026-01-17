@@ -819,9 +819,13 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     let password = extract_string_value(xml_to_parse, "Password");
     let url = extract_string_value(xml_to_parse, "URL").unwrap_or_default();
     let notes = extract_string_value(xml_to_parse, "Notes").unwrap_or_default();
-    // KeePassXC stores TOTP config in "otp" field (can also be "TOTP Seed" in some implementations)
+    // KeePassXC stores TOTP config in "otp" field (can also be "TOTP Seed" or "TOTP" in some implementations)
+    // Try multiple case variations since different implementations may use different cases
     let otp = extract_string_value(xml_to_parse, "otp")
-        .or_else(|| extract_string_value(xml_to_parse, "TOTP Seed"));
+        .or_else(|| extract_string_value(xml_to_parse, "OTP"))
+        .or_else(|| extract_string_value(xml_to_parse, "TOTP Seed"))
+        .or_else(|| extract_string_value(xml_to_parse, "TOTP"))
+        .or_else(|| extract_string_value(xml_to_parse, "totp"));
 
     // Parse history entries
     let history = if let Some(hist_xml) = history_xml {
