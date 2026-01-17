@@ -1,2 +1,3 @@
 [target.wasm32-unknown-unknown]
+# Enable SIMD for faster Argon2 computation
 rustflags = ["-C", "target-feature=+simd128"]
