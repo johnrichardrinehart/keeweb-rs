@@ -815,6 +815,27 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
 
     let uuid = extract_tag_value(xml_to_parse, "UUID")?;
     let title = extract_string_value(xml_to_parse, "Title").unwrap_or_default();
+
+    // Debug: dump all Key names found in this entry
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut keys = Vec::new();
+        let key_pattern = "<Key>";
+        let mut pos = 0;
+        while let Some(start) = xml_to_parse[pos..].find(key_pattern) {
+            let abs_start = pos + start + key_pattern.len();
+            if let Some(end) = xml_to_parse[abs_start..].find("</Key>") {
+                let key_name = &xml_to_parse[abs_start..abs_start + end];
+                keys.push(key_name.to_string());
+            }
+            pos = abs_start;
+        }
+        web_sys::console::log_1(&format!(
+            "[parse_entry] title='{}', keys={:?}",
+            title, keys
+        ).into());
+    }
+
     let username = extract_string_value(xml_to_parse, "UserName").unwrap_or_default();
     let password = extract_string_value(xml_to_parse, "Password");
     let url = extract_string_value(xml_to_parse, "URL").unwrap_or_default();
@@ -826,6 +847,12 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
         .or_else(|| extract_string_value(xml_to_parse, "TOTP Seed"))
         .or_else(|| extract_string_value(xml_to_parse, "TOTP"))
         .or_else(|| extract_string_value(xml_to_parse, "totp"));
+
+    // Debug: log if we found an OTP value
+    #[cfg(target_arch = "wasm32")]
+    if otp.is_some() {
+        web_sys::console::log_1(&format!("Found OTP for entry '{}': {:?}", title, otp.as_ref().map(|s| if s.len() > 20 { format!("{}...", &s[..20]) } else { s.clone() })).into());
+    }
 
     // Parse history entries
     let history = if let Some(hist_xml) = history_xml {
@@ -929,6 +956,20 @@ fn extract_string_value(xml: &str, key: &str) -> Option<String> {
 
     // Extract the content between > and </Value>
     let value = &value_tag_area[content_start..content_end];
+
+    // Debug: log when we're looking for otp-related keys
+    #[cfg(target_arch = "wasm32")]
+    if key.to_lowercase().contains("otp") || key.to_lowercase().contains("totp") {
+        let tag_preview = if value_tag_area.len() > 100 {
+            format!("{}...", &value_tag_area[..100])
+        } else {
+            value_tag_area.to_string()
+        };
+        web_sys::console::log_1(&format!(
+            "[extract_string_value] key='{}', value_empty={}, tag_area='{}'",
+            key, value.is_empty(), tag_preview
+        ).into());
+    }
 
     if value.is_empty() {
         None
