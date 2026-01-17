@@ -1,6 +1,7 @@
 //! Unlock dialog component for entering the master password
 
 use leptos::*;
+use leptos::spawn_local;
 use web_sys::KeyboardEvent;
 
 use crate::helper_client;
@@ -21,7 +22,7 @@ pub fn UnlockDialog() -> impl IntoView {
     let initial_url = helper_client::get_helper_url()
         .unwrap_or_else(|| helper_client::DEFAULT_HELPER_URL.to_string());
     let helper_url = create_rw_signal(initial_url);
-    let helper_enabled = create_rw_signal(helper_client::is_helper_configured());
+    let helper_enabled = create_rw_signal(helper_client::is_helper_available());
 
     let password_input_ref = create_node_ref::<leptos::html::Input>();
 
@@ -30,7 +31,21 @@ pub fn UnlockDialog() -> impl IntoView {
         let url = helper_url.get();
         if !url.is_empty() {
             helper_client::configure_helper(&url);
-            helper_enabled.set(true);
+            // Spawn async task to verify connection
+            spawn_local(async move {
+                match helper_client::check_helper_available().await {
+                    Ok(available) => {
+                        helper_enabled.set(available);
+                        if !available {
+                            log::warn!("Helper server at {} is not reachable", url);
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to check helper availability: {}", e);
+                        helper_enabled.set(false);
+                    }
+                }
+            });
         }
     };
 

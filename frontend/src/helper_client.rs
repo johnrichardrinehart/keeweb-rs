@@ -183,6 +183,12 @@ pub fn is_helper_configured() -> bool {
     HELPER_CLIENT.with(|client| client.borrow().is_some())
 }
 
+/// Check if helper server is available (synchronous, returns cached result)
+/// Returns true only if we've successfully connected to the helper
+pub fn is_helper_available() -> bool {
+    HELPER_AVAILABLE.with(|available| available.borrow().unwrap_or(false))
+}
+
 /// Check if helper server is available (async)
 pub async fn check_helper_available() -> Result<bool, String> {
     // Return cached result if available
