@@ -11,7 +11,7 @@ mod routes;
 mod services;
 mod state;
 
-use axum::{Router, routing::get};
+use axum::{Router, routing::{get, post}};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -54,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/conflicts", get(routes::files::list_conflicts))
         .route("/api/events", get(routes::sse::events))
         .route("/api/settings", get(routes::settings::get_settings))
+        .route("/api/argon2", post(routes::argon2::compute_argon2))
         .with_state(state)
         .layer(
             CorsLayer::new()

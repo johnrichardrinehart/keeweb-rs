@@ -1,5 +1,6 @@
 //! HTTP route handlers
 
+pub mod argon2;
 pub mod files;
 pub mod settings;
 pub mod sse;
