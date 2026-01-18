@@ -222,16 +222,8 @@ impl Database {
             }
         }
 
-        // Tags - KeePass uses semicolons, but some databases use commas
-        if let Some(tags_str) = kp_entry.get("Tags") {
-            // Try semicolon first (standard KeePass format), fall back to comma
-            let separator = if tags_str.contains(';') { ';' } else { ',' };
-            entry.tags = tags_str
-                .split(separator)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-        }
+        // Tags - keepass crate already parses them into a Vec<String>
+        entry.tags = kp_entry.tags.clone();
 
         // Set icon ID if present
         entry.icon_id = kp_entry.icon_id.map(|id| id as u32);
