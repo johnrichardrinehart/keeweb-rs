@@ -222,10 +222,12 @@ impl Database {
             }
         }
 
-        // Tags
+        // Tags - KeePass uses semicolons, but some databases use commas
         if let Some(tags_str) = kp_entry.get("Tags") {
+            // Try semicolon first (standard KeePass format), fall back to comma
+            let separator = if tags_str.contains(';') { ';' } else { ',' };
             entry.tags = tags_str
-                .split(';')
+                .split(separator)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();

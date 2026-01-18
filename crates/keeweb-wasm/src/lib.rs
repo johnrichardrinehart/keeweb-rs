@@ -1088,14 +1088,16 @@ fn extract_expiry_info(xml: &str) -> (bool, Option<String>) {
     (expires, expiry_time)
 }
 
-/// Extract tags from the <Tags> element (semicolon-separated)
+/// Extract tags from the <Tags> element (semicolon or comma-separated)
 fn extract_tags(xml: &str) -> Vec<String> {
     if let Some(tags_str) = extract_tag_value(xml, "Tags") {
         if tags_str.is_empty() {
             Vec::new()
         } else {
+            // Try semicolon first (standard KeePass format), fall back to comma
+            let separator = if tags_str.contains(';') { ';' } else { ',' };
             tags_str
-                .split(';')
+                .split(separator)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect()
