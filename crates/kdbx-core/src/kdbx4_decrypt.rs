@@ -4,15 +4,15 @@
 //! JavaScript Argon2 SIMD implementation) instead of the internal rust-argon2.
 
 use crate::error::{Error, Result};
+use aes::Aes256;
 use base64::Engine;
 use byteorder::{ByteOrder, LittleEndian};
-use chacha20::cipher::{KeyIvInit, StreamCipher};
 use chacha20::ChaCha20;
-use sha2::{Digest, Sha256, Sha512};
-use hmac::{Hmac, Mac};
-use aes::Aes256;
+use chacha20::cipher::{KeyIvInit, StreamCipher};
 use cipher::BlockDecryptMut;
 use flate2::read::GzDecoder;
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256, Sha512};
 use std::io::Read;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -33,22 +33,18 @@ const INNER_HEADER_STREAM_KEY: u8 = 2;
 
 // KDF parameter keys (as UTF-8 strings in VariantDictionary)
 const KDF_UUID_ARGON2D: [u8; 16] = [
-    0xef, 0x63, 0x6d, 0xdf, 0x8c, 0x29, 0x44, 0x4b,
-    0x91, 0xf7, 0xa9, 0xa4, 0x03, 0xe3, 0x0a, 0x0c,
+    0xef, 0x63, 0x6d, 0xdf, 0x8c, 0x29, 0x44, 0x4b, 0x91, 0xf7, 0xa9, 0xa4, 0x03, 0xe3, 0x0a, 0x0c,
 ];
 const KDF_UUID_ARGON2ID: [u8; 16] = [
-    0x9e, 0x29, 0x8b, 0x19, 0x56, 0xdb, 0x47, 0x73,
-    0xb2, 0x3d, 0xfc, 0x3e, 0xc6, 0xf0, 0xa1, 0xe6,
+    0x9e, 0x29, 0x8b, 0x19, 0x56, 0xdb, 0x47, 0x73, 0xb2, 0x3d, 0xfc, 0x3e, 0xc6, 0xf0, 0xa1, 0xe6,
 ];
 
 // Cipher UUIDs
 const CIPHER_AES256_CBC: [u8; 16] = [
-    0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50,
-    0xbe, 0x58, 0x05, 0x21, 0x6a, 0xfc, 0x5a, 0xff,
+    0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50, 0xbe, 0x58, 0x05, 0x21, 0x6a, 0xfc, 0x5a, 0xff,
 ];
 const CIPHER_CHACHA20_POLY1305: [u8; 16] = [
-    0xd6, 0x03, 0x8a, 0x2b, 0x8b, 0x6f, 0x4c, 0xb5,
-    0xa5, 0x24, 0x33, 0x9a, 0x31, 0xdb, 0xb5, 0x9a,
+    0xd6, 0x03, 0x8a, 0x2b, 0x8b, 0x6f, 0x4c, 0xb5, 0xa5, 0x24, 0x33, 0x9a, 0x31, 0xdb, 0xb5, 0x9a,
 ];
 
 /// KDF parameters extracted from KDBX4 header
@@ -162,9 +158,12 @@ pub fn parse_kdbx4_header(data: &[u8]) -> Result<Kdbx4Header> {
     let header_data = data[0..pos].to_vec();
 
     Ok(Kdbx4Header {
-        kdf_params: kdf_params.ok_or_else(|| Error::ParseError("Missing KDF parameters".to_string()))?,
-        master_seed: master_seed.ok_or_else(|| Error::ParseError("Missing master seed".to_string()))?,
-        encryption_iv: encryption_iv.ok_or_else(|| Error::ParseError("Missing encryption IV".to_string()))?,
+        kdf_params: kdf_params
+            .ok_or_else(|| Error::ParseError("Missing KDF parameters".to_string()))?,
+        master_seed: master_seed
+            .ok_or_else(|| Error::ParseError("Missing master seed".to_string()))?,
+        encryption_iv: encryption_iv
+            .ok_or_else(|| Error::ParseError("Missing encryption IV".to_string()))?,
         compression,
         cipher_type,
         header_data,
@@ -271,8 +270,10 @@ fn parse_kdf_params(data: &[u8]) -> Result<KdfParams> {
     Ok(KdfParams {
         kdf_type,
         salt: salt.ok_or_else(|| Error::ParseError("Missing KDF salt".to_string()))?,
-        memory_kb: memory.ok_or_else(|| Error::ParseError("Missing KDF memory".to_string()))? / 1024,
-        iterations: iterations.ok_or_else(|| Error::ParseError("Missing KDF iterations".to_string()))?,
+        memory_kb: memory.ok_or_else(|| Error::ParseError("Missing KDF memory".to_string()))?
+            / 1024,
+        iterations: iterations
+            .ok_or_else(|| Error::ParseError("Missing KDF iterations".to_string()))?,
         parallelism: parallelism.unwrap_or(1),
         version: version.unwrap_or(0x13),
     })
@@ -290,7 +291,7 @@ pub fn decrypt_kdbx4_with_key(
 
     // Compute composite key from password (unused here but kept for reference)
     let password_hash = Sha256::digest(password.as_bytes());
-    let _composite_key = Sha256::digest(&password_hash);
+    let _composite_key = Sha256::digest(password_hash);
 
     // Note: The transformed_key parameter replaces the slow KDF step
     // It should be computed as: Argon2(composite_key, salt, params)
@@ -334,7 +335,9 @@ pub fn decrypt_kdbx4_with_key(
     let computed_header_hmac = mac.finalize().into_bytes();
 
     if stored_header_hmac != computed_header_hmac.as_slice() {
-        return Err(Error::DecryptError("Invalid password or corrupted file".to_string()));
+        return Err(Error::DecryptError(
+            "Invalid password or corrupted file".to_string(),
+        ));
     }
 
     // Read HMAC block stream
@@ -362,7 +365,7 @@ pub fn decrypt_kdbx4_with_key(
 
 fn compute_hmac_block_key(block_index: u64, hmac_key: &[u8]) -> Result<Vec<u8>> {
     let mut hasher = Sha512::new();
-    hasher.update(&block_index.to_le_bytes());
+    hasher.update(block_index.to_le_bytes());
     hasher.update(hmac_key);
     Ok(hasher.finalize().to_vec())
 }
@@ -406,7 +409,9 @@ fn read_hmac_block_stream(data: &[u8], hmac_key: &[u8]) -> Result<Vec<u8>> {
         let computed_hmac = mac.finalize().into_bytes();
 
         if block_hmac != computed_hmac.as_slice() {
-            return Err(Error::DecryptError("Block HMAC verification failed".to_string()));
+            return Err(Error::DecryptError(
+                "Block HMAC verification failed".to_string(),
+            ));
         }
 
         result.extend_from_slice(block_data);
@@ -423,7 +428,8 @@ fn decrypt_aes256_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
         .map_err(|_| Error::DecryptError("AES init failed".to_string()))?;
 
     let mut buffer = data.to_vec();
-    let decrypted = cipher.decrypt_padded_mut::<Pkcs7>(&mut buffer)
+    let decrypted = cipher
+        .decrypt_padded_mut::<Pkcs7>(&mut buffer)
         .map_err(|_| Error::DecryptError("AES decryption failed".to_string()))?;
 
     Ok(decrypted.to_vec())
@@ -436,16 +442,22 @@ fn decrypt_chacha20_poly1305(data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Ve
     use chacha20::cipher::{KeyIvInit, StreamCipher};
 
     if key.len() != 32 {
-        return Err(Error::DecryptError("ChaCha20 requires 32-byte key".to_string()));
+        return Err(Error::DecryptError(
+            "ChaCha20 requires 32-byte key".to_string(),
+        ));
     }
     if nonce.len() != 12 {
-        return Err(Error::DecryptError("ChaCha20 requires 12-byte nonce".to_string()));
+        return Err(Error::DecryptError(
+            "ChaCha20 requires 12-byte nonce".to_string(),
+        ));
     }
 
     // ChaCha20 uses 32-byte key and 12-byte nonce
-    let key_arr: [u8; 32] = key.try_into()
+    let key_arr: [u8; 32] = key
+        .try_into()
         .map_err(|_| Error::DecryptError("Invalid key length".to_string()))?;
-    let nonce_arr: [u8; 12] = nonce.try_into()
+    let nonce_arr: [u8; 12] = nonce
+        .try_into()
         .map_err(|_| Error::DecryptError("Invalid nonce length".to_string()))?;
 
     let mut cipher = ChaCha20::new(&key_arr.into(), &nonce_arr.into());
@@ -459,7 +471,8 @@ fn decrypt_chacha20_poly1305(data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Ve
 fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = GzDecoder::new(data);
     let mut result = Vec::new();
-    decoder.read_to_end(&mut result)
+    decoder
+        .read_to_end(&mut result)
         .map_err(|e| Error::ParseError(format!("Decompression failed: {}", e)))?;
     Ok(result)
 }
@@ -467,7 +480,7 @@ fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
 /// Get the composite key from a password (for Argon2 input)
 pub fn compute_composite_key(password: &str) -> [u8; 32] {
     let password_hash = Sha256::digest(password.as_bytes());
-    let composite_key = Sha256::digest(&password_hash);
+    let composite_key = Sha256::digest(password_hash);
     let mut result = [0u8; 32];
     result.copy_from_slice(&composite_key);
     result
@@ -497,7 +510,9 @@ fn parse_inner_header(data: &[u8]) -> Result<InnerHeader> {
         pos += 5;
 
         if pos + field_len > data.len() {
-            return Err(Error::ParseError("Truncated inner header field".to_string()));
+            return Err(Error::ParseError(
+                "Truncated inner header field".to_string(),
+            ));
         }
 
         let field_data = &data[pos..pos + field_len];
@@ -518,8 +533,10 @@ fn parse_inner_header(data: &[u8]) -> Result<InnerHeader> {
     }
 
     Ok(InnerHeader {
-        stream_key: stream_key.ok_or_else(|| Error::ParseError("Missing inner stream key".to_string()))?,
-        stream_id: stream_id.ok_or_else(|| Error::ParseError("Missing inner stream ID".to_string()))?,
+        stream_key: stream_key
+            .ok_or_else(|| Error::ParseError("Missing inner stream key".to_string()))?,
+        stream_id: stream_id
+            .ok_or_else(|| Error::ParseError("Missing inner stream ID".to_string()))?,
         xml_start: pos,
     })
 }
@@ -536,9 +553,11 @@ impl ProtectedStreamCipher {
         let hash = Sha512::digest(stream_key);
 
         // First 32 bytes = key, next 12 bytes = nonce
-        let key: [u8; 32] = hash[0..32].try_into()
+        let key: [u8; 32] = hash[0..32]
+            .try_into()
             .map_err(|_| Error::DecryptError("Invalid key length".to_string()))?;
-        let nonce: [u8; 12] = hash[32..44].try_into()
+        let nonce: [u8; 12] = hash[32..44]
+            .try_into()
             .map_err(|_| Error::DecryptError("Invalid nonce length".to_string()))?;
 
         let cipher = ChaCha20::new(&key.into(), &nonce.into());
@@ -548,7 +567,8 @@ impl ProtectedStreamCipher {
 
     /// Decrypt a base64-encoded protected value
     pub fn decrypt(&mut self, base64_value: &str) -> Result<String> {
-        let encrypted = base64::engine::general_purpose::STANDARD.decode(base64_value)
+        let encrypted = base64::engine::general_purpose::STANDARD
+            .decode(base64_value)
             .map_err(|e| Error::DecryptError(format!("Base64 decode failed: {}", e)))?;
 
         let mut decrypted = encrypted;
@@ -561,7 +581,7 @@ impl ProtectedStreamCipher {
 
 /// Decrypt protected values in XML using ChaCha20 with proper XML parsing
 pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> {
-    use quick_xml::events::{Event, BytesStart, BytesText};
+    use quick_xml::events::{BytesStart, BytesText, Event};
     use quick_xml::{Reader, Writer};
     use std::io::Cursor;
 
@@ -580,8 +600,10 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
                     // Check for Protected="True" or ProtectInMemory="True" attribute
                     let is_protected = e.attributes().any(|attr| {
                         if let Ok(attr) = attr {
-                            (attr.key.as_ref() == b"Protected" || attr.key.as_ref() == b"ProtectInMemory") &&
-                            (attr.value.as_ref() == b"True" || attr.value.as_ref() == b"true")
+                            (attr.key.as_ref() == b"Protected"
+                                || attr.key.as_ref() == b"ProtectInMemory")
+                                && (attr.value.as_ref() == b"True"
+                                    || attr.value.as_ref() == b"true")
                         } else {
                             false
                         }
@@ -592,12 +614,14 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
                         // Write the tag WITH ProtectInMemory="True" so the parser knows it was protected
                         let mut new_elem = BytesStart::new("Value");
                         new_elem.push_attribute(("ProtectInMemory", "True"));
-                        writer.write_event(Event::Start(new_elem))
+                        writer
+                            .write_event(Event::Start(new_elem))
                             .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
                         continue;
                     }
                 }
-                writer.write_event(Event::Start(e.clone()))
+                writer
+                    .write_event(Event::Start(e.clone()))
                     .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
             }
             Ok(Event::Text(ref e)) => {
@@ -609,17 +633,20 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
 
                     if base64_text.is_empty() {
                         // Empty protected value, just write empty text
-                        writer.write_event(Event::Text(BytesText::new("")))
+                        writer
+                            .write_event(Event::Text(BytesText::new("")))
                             .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
                     } else {
                         // Decrypt the value
                         let decrypted = cipher.decrypt(base64_text)?;
                         // Escape the decrypted value for XML
-                        writer.write_event(Event::Text(BytesText::new(&decrypted)))
+                        writer
+                            .write_event(Event::Text(BytesText::new(&decrypted)))
                             .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
                     }
                 } else {
-                    writer.write_event(Event::Text(e.clone()))
+                    writer
+                        .write_event(Event::Text(e.clone()))
                         .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
                 }
             }
@@ -627,7 +654,8 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
                 if e.name().as_ref() == b"Value" && in_protected_value {
                     in_protected_value = false;
                 }
-                writer.write_event(Event::End(e.clone()))
+                writer
+                    .write_event(Event::End(e.clone()))
                     .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
             }
             Ok(Event::Empty(ref e)) => {
@@ -636,8 +664,10 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
                 if name.as_ref() == b"Value" {
                     let is_protected = e.attributes().any(|attr| {
                         if let Ok(attr) = attr {
-                            (attr.key.as_ref() == b"Protected" || attr.key.as_ref() == b"ProtectInMemory") &&
-                            (attr.value.as_ref() == b"True" || attr.value.as_ref() == b"true")
+                            (attr.key.as_ref() == b"Protected"
+                                || attr.key.as_ref() == b"ProtectInMemory")
+                                && (attr.value.as_ref() == b"True"
+                                    || attr.value.as_ref() == b"true")
                         } else {
                             false
                         }
@@ -647,22 +677,29 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
                         // Write as <Value ProtectInMemory="True"/> to preserve protection status
                         let mut new_elem = BytesStart::new("Value");
                         new_elem.push_attribute(("ProtectInMemory", "True"));
-                        writer.write_event(Event::Empty(new_elem))
+                        writer
+                            .write_event(Event::Empty(new_elem))
                             .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
                         continue;
                     }
                 }
-                writer.write_event(Event::Empty(e.clone()))
+                writer
+                    .write_event(Event::Empty(e.clone()))
                     .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
             }
             Ok(Event::Eof) => break,
             Ok(e) => {
                 // Pass through all other events (comments, CData, etc.)
-                writer.write_event(e)
+                writer
+                    .write_event(e)
                     .map_err(|err| Error::ParseError(format!("XML write error: {}", err)))?;
             }
             Err(e) => {
-                return Err(Error::ParseError(format!("XML parse error at position {}: {}", reader.error_position(), e)));
+                return Err(Error::ParseError(format!(
+                    "XML parse error at position {}: {}",
+                    reader.error_position(),
+                    e
+                )));
             }
         }
     }
@@ -683,7 +720,7 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
 /// This is slower than `decrypt_kdbx4_full` with a pre-computed key, but provides
 /// a unified code path that ensures protected attributes are always correctly handled.
 pub fn decrypt_kdbx4_full_with_password(data: &[u8], password: &str) -> Result<String> {
-    use argon2::{Argon2, Version, Params, Algorithm};
+    use argon2::{Algorithm, Argon2, Params, Version};
 
     let header = parse_kdbx4_header(data)?;
 
@@ -706,16 +743,19 @@ pub fn decrypt_kdbx4_full_with_password(data: &[u8], password: &str) -> Result<S
         header.kdf_params.iterations as u32,
         header.kdf_params.parallelism,
         Some(32), // Output length
-    ).map_err(|e| Error::DecryptError(format!("Argon2 params error: {}", e)))?;
+    )
+    .map_err(|e| Error::DecryptError(format!("Argon2 params error: {}", e)))?;
 
     let argon2 = Argon2::new(algorithm, version, params);
 
     let mut transformed_key = [0u8; 32];
-    argon2.hash_password_into(
-        &composite_key,
-        &header.kdf_params.salt,
-        &mut transformed_key,
-    ).map_err(|e| Error::DecryptError(format!("Argon2 error: {}", e)))?;
+    argon2
+        .hash_password_into(
+            &composite_key,
+            &header.kdf_params.salt,
+            &mut transformed_key,
+        )
+        .map_err(|e| Error::DecryptError(format!("Argon2 error: {}", e)))?;
 
     // Now use the existing function with the derived key
     decrypt_kdbx4_full(data, password, &transformed_key)
@@ -731,7 +771,7 @@ pub fn decrypt_kdbx4_full(
 
     // Compute composite key from password
     let password_hash = Sha256::digest(password.as_bytes());
-    let _composite_key = Sha256::digest(&password_hash);
+    let _composite_key = Sha256::digest(password_hash);
 
     // Compute master key
     let mut master_key_input = Vec::with_capacity(header.master_seed.len() + 32);
@@ -772,7 +812,9 @@ pub fn decrypt_kdbx4_full(
     let computed_header_hmac = mac.finalize().into_bytes();
 
     if stored_header_hmac != computed_header_hmac.as_slice() {
-        return Err(Error::DecryptError("Invalid password or corrupted file".to_string()));
+        return Err(Error::DecryptError(
+            "Invalid password or corrupted file".to_string(),
+        ));
     }
 
     // Read HMAC block stream

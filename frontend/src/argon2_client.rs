@@ -7,8 +7,8 @@ use js_sys::{Object, Reflect, Uint8Array};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use web_sys::{MessageEvent, Worker};
 
 /// Callback type for argon2 completion
@@ -140,9 +140,11 @@ impl Argon2Client {
         log::debug!("Initializing argon2-pthread with SIMD and threading");
 
         // Store callback in queue
-        self.pending_callbacks.borrow_mut().push_back(Box::new(move |result| {
-            callback(result.map(|_| ()));
-        }));
+        self.pending_callbacks
+            .borrow_mut()
+            .push_back(Box::new(move |result| {
+                callback(result.map(|_| ()));
+            }));
 
         // Get base URL
         let origin = web_sys::window()
@@ -179,6 +181,7 @@ impl Argon2Client {
     }
 
     /// Run Argon2 hash with the given parameters
+    #[allow(clippy::too_many_arguments)]
     pub fn hash<F>(
         &self,
         argon2_type: &str, // "argon2d" or "argon2id"
@@ -201,7 +204,9 @@ impl Argon2Client {
         );
 
         // Store callback in queue
-        self.pending_callbacks.borrow_mut().push_back(Box::new(callback));
+        self.pending_callbacks
+            .borrow_mut()
+            .push_back(Box::new(callback));
 
         // Select method based on type
         let method = if argon2_type == "argon2d" {
@@ -229,10 +234,30 @@ impl Argon2Client {
         let salt_arr = Uint8Array::from(salt.as_slice());
         Reflect::set(&params, &"salt".into(), &salt_arr).unwrap();
 
-        Reflect::set(&params, &"timeCost".into(), &JsValue::from_f64(time_cost as f64)).unwrap();
-        Reflect::set(&params, &"memoryCost".into(), &JsValue::from_f64(memory_cost as f64)).unwrap();
-        Reflect::set(&params, &"threads".into(), &JsValue::from_f64(threads as f64)).unwrap();
-        Reflect::set(&params, &"hashLen".into(), &JsValue::from_f64(hash_len as f64)).unwrap();
+        Reflect::set(
+            &params,
+            &"timeCost".into(),
+            &JsValue::from_f64(time_cost as f64),
+        )
+        .unwrap();
+        Reflect::set(
+            &params,
+            &"memoryCost".into(),
+            &JsValue::from_f64(memory_cost as f64),
+        )
+        .unwrap();
+        Reflect::set(
+            &params,
+            &"threads".into(),
+            &JsValue::from_f64(threads as f64),
+        )
+        .unwrap();
+        Reflect::set(
+            &params,
+            &"hashLen".into(),
+            &JsValue::from_f64(hash_len as f64),
+        )
+        .unwrap();
 
         Reflect::set(&message, &"params".into(), &params).unwrap();
 

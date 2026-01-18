@@ -1,9 +1,9 @@
 //! Unlock dialog component for entering the master password
 
-use leptos::*;
 use leptos::spawn_local;
-use wasm_bindgen::prelude::*;
+use leptos::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use web_sys::KeyboardEvent;
 
 use crate::helper_client;
@@ -25,7 +25,10 @@ pub fn UnlockDialog() -> impl IntoView {
         .unwrap_or_else(|| helper_client::DEFAULT_HELPER_URL.to_string());
     let helper_url = create_rw_signal(initial_url);
     let is_available = helper_client::is_helper_available();
-    log::info!("UnlockDialog init: is_helper_available() = {}", is_available);
+    log::info!(
+        "UnlockDialog init: is_helper_available() = {}",
+        is_available
+    );
     let helper_enabled = create_rw_signal(is_available);
     let helper_error = create_rw_signal(Option::<String>::None);
     let helper_connecting = create_rw_signal(false);
@@ -47,7 +50,8 @@ pub fn UnlockDialog() -> impl IntoView {
                         helper_enabled.set(available);
                         if !available {
                             log::warn!("Helper server at {} is not reachable", url);
-                            helper_error.set(Some(format!("Connection failed: server not reachable")));
+                            helper_error
+                                .set(Some("Connection failed: server not reachable".to_string()));
                         }
                     }
                     Err(e) => {

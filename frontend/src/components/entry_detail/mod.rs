@@ -410,7 +410,7 @@ fn EntryDetailContent(
                         <div class="attachments-list">
                             {attachments.into_iter().map(|attachment| {
                                 let name = attachment.name.clone();
-                                let size_display = attachment.size.map(|s| format_file_size(s)).unwrap_or_default();
+                                let size_display = attachment.size.map(format_file_size).unwrap_or_default();
 
                                 view! {
                                     <div class="attachment-item">
@@ -614,8 +614,7 @@ fn parse_base64_timestamp_entry(b64: &str) -> Option<i64> {
     }
 
     let seconds_since_year1 = i64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ]);
 
     const SECONDS_FROM_YEAR1_TO_UNIX: i64 = 62135596800;
@@ -678,10 +677,7 @@ fn format_file_size(bytes: usize) -> String {
 
 /// TOTP field component
 #[component]
-fn TotpField(
-    otp_value: String,
-    copied_field: RwSignal<Option<String>>,
-) -> impl IntoView {
+fn TotpField(otp_value: String, copied_field: RwSignal<Option<String>>) -> impl IntoView {
     // Signal for the current TOTP code
     let totp_code = create_rw_signal(String::new());
     let totp_remaining = create_rw_signal(0u32);
@@ -691,24 +687,20 @@ fn TotpField(
     let otp_for_generate = otp_value.clone();
 
     // Function to generate TOTP
-    let generate = move || {
-        match TotpConfig::parse(&otp_for_generate) {
-            Ok(config) => {
-                match config.generate() {
-                    Ok(result) => {
-                        totp_code.set(result.code);
-                        totp_remaining.set(result.remaining);
-                        totp_period.set(result.period);
-                        totp_error.set(None);
-                    }
-                    Err(e) => {
-                        totp_error.set(Some(e));
-                    }
-                }
+    let generate = move || match TotpConfig::parse(&otp_for_generate) {
+        Ok(config) => match config.generate() {
+            Ok(result) => {
+                totp_code.set(result.code);
+                totp_remaining.set(result.remaining);
+                totp_period.set(result.period);
+                totp_error.set(None);
             }
             Err(e) => {
                 totp_error.set(Some(e));
             }
+        },
+        Err(e) => {
+            totp_error.set(Some(e));
         }
     };
 
@@ -726,24 +718,20 @@ fn TotpField(
 
         // Update every second
         let handle = set_interval_with_handle(
-            move || {
-                match TotpConfig::parse(&otp) {
-                    Ok(config) => {
-                        match config.generate() {
-                            Ok(result) => {
-                                code_signal.set(result.code);
-                                remaining_signal.set(result.remaining);
-                                period_signal.set(result.period);
-                                error_signal.set(None);
-                            }
-                            Err(e) => {
-                                error_signal.set(Some(e));
-                            }
-                        }
+            move || match TotpConfig::parse(&otp) {
+                Ok(config) => match config.generate() {
+                    Ok(result) => {
+                        code_signal.set(result.code);
+                        remaining_signal.set(result.remaining);
+                        period_signal.set(result.period);
+                        error_signal.set(None);
                     }
                     Err(e) => {
                         error_signal.set(Some(e));
                     }
+                },
+                Err(e) => {
+                    error_signal.set(Some(e));
                 }
             },
             std::time::Duration::from_secs(1),
@@ -843,11 +831,8 @@ fn HistoryViewer(
     let show_password = create_rw_signal(false);
 
     // Reverse history so newest is first
-    let history_reversed: Vec<(usize, HistoryEntryInfo)> = history
-        .into_iter()
-        .enumerate()
-        .rev()
-        .collect();
+    let history_reversed: Vec<(usize, HistoryEntryInfo)> =
+        history.into_iter().enumerate().rev().collect();
 
     let on_close_overlay = on_close.clone();
     let on_close_button = on_close;
@@ -989,7 +974,10 @@ fn format_timestamp_relative(timestamp: &str) -> (String, String) {
 
             // Format as RFC 3339
             let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(epoch_ms as f64));
-            let rfc3339 = date.to_iso_string().as_string().unwrap_or_else(|| timestamp.to_string());
+            let rfc3339 = date
+                .to_iso_string()
+                .as_string()
+                .unwrap_or_else(|| timestamp.to_string());
 
             (relative, rfc3339)
         }
@@ -1028,8 +1016,7 @@ fn parse_base64_timestamp(b64: &str) -> Option<i64> {
 
     // Read as little-endian i64 (seconds since 0001-01-01)
     let seconds_since_year1 = i64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ]);
 
     // Convert to Unix epoch (seconds since 1970-01-01)

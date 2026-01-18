@@ -5,7 +5,7 @@
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use axum::{extract::Json, http::StatusCode, response::IntoResponse};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 
 /// Request to compute Argon2 hash
@@ -113,12 +113,17 @@ pub async fn compute_argon2(
     tracing::debug!("Password len={}, salt len={}", password.len(), salt.len());
 
     // Build Argon2 params
-    let params = Params::new(req.memory_kib, req.iterations, req.parallelism, Some(req.output_len))
-        .map_err(|e| bad_request(format!("Invalid Argon2 parameters: {}", e)))?;
+    let params = Params::new(
+        req.memory_kib,
+        req.iterations,
+        req.parallelism,
+        Some(req.output_len),
+    )
+    .map_err(|e| bad_request(format!("Invalid Argon2 parameters: {}", e)))?;
 
     let version = match req.version {
         16 => Version::V0x10,
-        19 | _ => Version::V0x13,
+        _ => Version::V0x13,
     };
 
     let argon2 = Argon2::new(algorithm, version, params);
@@ -151,5 +156,8 @@ pub async fn compute_argon2(
 }
 
 fn bad_request(message: String) -> (StatusCode, Json<Argon2Error>) {
-    (StatusCode::BAD_REQUEST, Json(Argon2Error { error: message }))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(Argon2Error { error: message }),
+    )
 }

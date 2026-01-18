@@ -104,7 +104,7 @@ async fn handle_event(state: &Arc<AppState>, event: Event) {
                             modified: metadata
                                 .modified()
                                 .ok()
-                                .map(|t| chrono::DateTime::from(t))
+                                .map(chrono::DateTime::from)
                                 .unwrap_or_else(Utc::now),
                         };
 
@@ -151,23 +151,21 @@ async fn scan_directory(
                         })
                         .await;
                 }
-            } else {
-                if let Ok(metadata) = entry.metadata().await {
-                    let info = KdbxFileInfo {
-                        path: path_str,
-                        name: path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default(),
-                        size: metadata.len(),
-                        modified: metadata
-                            .modified()
-                            .ok()
-                            .map(|t| chrono::DateTime::from(t))
-                            .unwrap_or_else(Utc::now),
-                    };
-                    state.add_kdbx_file(info).await;
-                }
+            } else if let Ok(metadata) = entry.metadata().await {
+                let info = KdbxFileInfo {
+                    path: path_str,
+                    name: path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    size: metadata.len(),
+                    modified: metadata
+                        .modified()
+                        .ok()
+                        .map(chrono::DateTime::from)
+                        .unwrap_or_else(Utc::now),
+                };
+                state.add_kdbx_file(info).await;
             }
         }
     }

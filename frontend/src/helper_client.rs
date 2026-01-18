@@ -3,10 +3,10 @@
 //! This module provides a client to communicate with the optional keeweb-server
 //! for native-speed Argon2 computation when browser-based computation is too slow.
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, RequestMode, Response};
 
@@ -87,6 +87,7 @@ impl HelperClient {
     ///
     /// This runs natively on the server and is much faster than WebAssembly
     /// for high-memory configurations.
+    #[allow(clippy::too_many_arguments)]
     pub async fn argon2_hash(
         &self,
         variant: &str,
@@ -245,7 +246,10 @@ pub const DEFAULT_HELPER_URL: &str = "http://127.0.0.1:8081";
 /// Attempt to auto-connect to the default helper server
 /// Returns true if connection was successful
 pub async fn try_auto_connect() -> bool {
-    log::info!("Attempting auto-connect to helper at {}", DEFAULT_HELPER_URL);
+    log::info!(
+        "Attempting auto-connect to helper at {}",
+        DEFAULT_HELPER_URL
+    );
     let client = HelperClient::new(DEFAULT_HELPER_URL);
     match client.health_check().await {
         Ok(true) => {
@@ -277,12 +281,11 @@ pub fn disable_helper() {
 
 /// Get the currently configured helper URL (if any)
 pub fn get_helper_url() -> Option<String> {
-    HELPER_CLIENT.with(|client| {
-        client.borrow().as_ref().map(|c| c.base_url.clone())
-    })
+    HELPER_CLIENT.with(|client| client.borrow().as_ref().map(|c| c.base_url.clone()))
 }
 
 /// Compute Argon2 hash using the helper server (if available)
+#[allow(clippy::too_many_arguments)]
 pub async fn helper_argon2_hash(
     variant: &str,
     password: &[u8],
@@ -293,18 +296,22 @@ pub async fn helper_argon2_hash(
     output_len: usize,
     version: u32,
 ) -> Result<(Vec<u8>, u64), String> {
-    let url = HELPER_CLIENT.with(|client| {
-        client
-            .borrow()
-            .as_ref()
-            .map(|c| c.base_url.clone())
-    });
+    let url = HELPER_CLIENT.with(|client| client.borrow().as_ref().map(|c| c.base_url.clone()));
 
     match url {
         Some(url) => {
             let client = HelperClient::new(url);
             let result = client
-                .argon2_hash(variant, password, salt, iterations, memory_kib, parallelism, output_len, version)
+                .argon2_hash(
+                    variant,
+                    password,
+                    salt,
+                    iterations,
+                    memory_kib,
+                    parallelism,
+                    output_len,
+                    version,
+                )
                 .await;
 
             result

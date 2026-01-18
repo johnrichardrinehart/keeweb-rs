@@ -107,7 +107,10 @@ impl TotpConfig {
 
         // Parse issuer from label (format: "Issuer:Account" or just "Account")
         let (issuer_from_label, account) = if let Some(colon_pos) = label.find(':') {
-            (Some(label[..colon_pos].to_string()), label[colon_pos + 1..].to_string())
+            (
+                Some(label[..colon_pos].to_string()),
+                label[colon_pos + 1..].to_string(),
+            )
         } else {
             (None, label)
         };
@@ -158,7 +161,11 @@ impl TotpConfig {
             period,
             algorithm,
             issuer: final_issuer,
-            label: if account.is_empty() { None } else { Some(account) },
+            label: if account.is_empty() {
+                None
+            } else {
+                Some(account)
+            },
         })
     }
 
@@ -222,8 +229,7 @@ impl std::error::Error for TotpError {}
 
 /// Generate HOTP code using SHA1
 fn hotp_sha1(secret: &[u8], counter: u64, digits: u32) -> Result<String, TotpError> {
-    let mut mac = HmacSha1::new_from_slice(secret)
-        .map_err(|_| TotpError::HmacError)?;
+    let mut mac = HmacSha1::new_from_slice(secret).map_err(|_| TotpError::HmacError)?;
     mac.update(&counter.to_be_bytes());
     let result = mac.finalize().into_bytes();
     truncate_and_format(&result, digits)
@@ -231,8 +237,7 @@ fn hotp_sha1(secret: &[u8], counter: u64, digits: u32) -> Result<String, TotpErr
 
 /// Generate HOTP code using SHA256
 fn hotp_sha256(secret: &[u8], counter: u64, digits: u32) -> Result<String, TotpError> {
-    let mut mac = HmacSha256::new_from_slice(secret)
-        .map_err(|_| TotpError::HmacError)?;
+    let mut mac = HmacSha256::new_from_slice(secret).map_err(|_| TotpError::HmacError)?;
     mac.update(&counter.to_be_bytes());
     let result = mac.finalize().into_bytes();
     truncate_and_format(&result, digits)
@@ -240,8 +245,7 @@ fn hotp_sha256(secret: &[u8], counter: u64, digits: u32) -> Result<String, TotpE
 
 /// Generate HOTP code using SHA512
 fn hotp_sha512(secret: &[u8], counter: u64, digits: u32) -> Result<String, TotpError> {
-    let mut mac = HmacSha512::new_from_slice(secret)
-        .map_err(|_| TotpError::HmacError)?;
+    let mut mac = HmacSha512::new_from_slice(secret).map_err(|_| TotpError::HmacError)?;
     mac.update(&counter.to_be_bytes());
     let result = mac.finalize().into_bytes();
     truncate_and_format(&result, digits)
@@ -281,7 +285,9 @@ fn decode_base32(input: &str) -> Result<Vec<u8>, TotpError> {
     let mut result = Vec::new();
 
     for c in input.bytes() {
-        let value = alphabet.iter().position(|&x| x == c)
+        let value = alphabet
+            .iter()
+            .position(|&x| x == c)
             .ok_or(TotpError::InvalidBase32)? as u64;
 
         bits = (bits << 5) | value;

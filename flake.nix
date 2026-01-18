@@ -138,88 +138,91 @@
               cargoHash = "sha256-iqQiWbsKlLBiJFeqIYiXo3cqxGLSjNM8SOWXGM9u43E=";
 
               nativeBuildInputs = [pkgs.pkg-config];
-              buildInputs = [pkgs.openssl] ++ lib.optionals pkgs.stdenv.isDarwin [
-                pkgs.darwin.apple_sdk.frameworks.Security
-              ];
+              buildInputs =
+                [pkgs.openssl]
+                ++ lib.optionals pkgs.stdenv.isDarwin [
+                  pkgs.darwin.apple_sdk.frameworks.Security
+                ];
             };
-          in pkgs.stdenv.mkDerivation {
-            pname = "keeweb-frontend";
-            version = "0.1.0";
-            src = ./.;
+          in
+            pkgs.stdenv.mkDerivation {
+              pname = "keeweb-frontend";
+              version = "0.1.0";
+              src = ./.;
 
-            nativeBuildInputs =
-              nativeBuildInputs
-              ++ [
-                pkgs.trunk
-                wasmBindgenCli
-                pkgs.binaryen
-                pkgs.wasm-pack
-              ];
-            inherit buildInputs;
+              nativeBuildInputs =
+                nativeBuildInputs
+                ++ [
+                  pkgs.trunk
+                  wasmBindgenCli
+                  pkgs.binaryen
+                  pkgs.wasm-pack
+                ];
+              inherit buildInputs;
 
-            buildPhase = ''
-              export HOME=$(mktemp -d)
+              buildPhase = ''
+                export HOME=$(mktemp -d)
 
-              # Set git revision for build info (use self.rev if available, otherwise "dirty")
-              export GIT_REVISION="${self.rev or "dirty"}"
+                # Set git revision for build info (use self.rev if available, otherwise "dirty")
+                export GIT_REVISION="${self.rev or "dirty"}"
 
-              # Set up vendored dependencies for cargo
-              mkdir -p .cargo
-              cat > .cargo/config.toml << EOF
-              [source.crates-io]
-              replace-with = "vendored-sources"
+                # Set up vendored dependencies for cargo
+                mkdir -p .cargo
+                cat > .cargo/config.toml << EOF
+                [source.crates-io]
+                replace-with = "vendored-sources"
 
-              [source.vendored-sources]
-              directory = "${cargoVendorDir}"
-              EOF
+                [source.vendored-sources]
+                directory = "${cargoVendorDir}"
+                EOF
 
-              # Build the keeweb-wasm crate first
-              echo "Building keeweb-wasm..."
-              wasm-pack build crates/keeweb-wasm --target web --out-dir ../../frontend/public/wasm --mode no-install
+                # Build the keeweb-wasm crate first
+                echo "Building keeweb-wasm..."
+                wasm-pack build crates/keeweb-wasm --target web --out-dir ../../frontend/public/wasm --mode no-install
 
-              # Create a Trunk.toml that uses the system wasm-bindgen version
-              # trunk looks for wasm-bindgen in PATH when --offline is used
-              cd frontend
+                # Create a Trunk.toml that uses the system wasm-bindgen version
+                # trunk looks for wasm-bindgen in PATH when --offline is used
+                cd frontend
 
-              # Get the version of wasm-bindgen-cli we have
-              WASM_BINDGEN_VERSION=$(wasm-bindgen --version | cut -d' ' -f2)
-              echo "Using system wasm-bindgen version: $WASM_BINDGEN_VERSION"
+                # Get the version of wasm-bindgen-cli we have
+                WASM_BINDGEN_VERSION=$(wasm-bindgen --version | cut -d' ' -f2)
+                echo "Using system wasm-bindgen version: $WASM_BINDGEN_VERSION"
 
-              # Get the wasm-opt version (binaryen)
-              WASM_OPT_VERSION=$(wasm-opt --version | grep -oP 'version \K\d+')
-              echo "Using system wasm-opt version: $WASM_OPT_VERSION"
+                # Get the wasm-opt version (binaryen)
+                WASM_OPT_VERSION=$(wasm-opt --version | grep -oP 'version \K\d+')
+                echo "Using system wasm-opt version: $WASM_OPT_VERSION"
 
-              # Create Trunk.toml with matching version to prevent download
-              cat > Trunk.toml << TOML
-              [build]
-              target = "index.html"
-              dist = "dist"
+                # Create Trunk.toml with matching version to prevent download
+                cat > Trunk.toml << TOML
+                [build]
+                target = "index.html"
+                dist = "dist"
 
-              [tools]
-              wasm_bindgen = "$WASM_BINDGEN_VERSION"
-              wasm_opt = "version_$WASM_OPT_VERSION"
+                [tools]
+                wasm_bindgen = "$WASM_BINDGEN_VERSION"
+                wasm_opt = "version_$WASM_OPT_VERSION"
 
-              [watch]
-              watch = ["src", "index.html", "public"]
-              ignore = ["dist"]
-              TOML
+                [watch]
+                watch = ["src", "index.html", "public"]
+                ignore = ["dist"]
+                TOML
 
-              trunk build --release --public-url /keeweb-rs/ --offline
-            '';
+                trunk build --release --public-url /keeweb-rs/ --offline
+              '';
 
-            installPhase = ''
-              mkdir -p $out
-              cp -r dist/* $out/
-              # Add .nojekyll to prevent GitHub Pages from ignoring _files
-              touch $out/.nojekyll
-            '';
+              installPhase = ''
+                mkdir -p $out
+                cp -r dist/* $out/
+                # Add .nojekyll to prevent GitHub Pages from ignoring _files
+                touch $out/.nojekyll
+              '';
 
-            meta = with lib; {
-              description = "Web frontend for keeweb-rs password manager";
-              homepage = "https://github.com/johnrichardrinehart/keeweb-rs";
-              license = licenses.mit;
+              meta = with lib; {
+                description = "Web frontend for keeweb-rs password manager";
+                homepage = "https://github.com/johnrichardrinehart/keeweb-rs";
+                license = licenses.mit;
+              };
             };
-          };
         };
 
         # Development shell
@@ -266,9 +269,43 @@
         };
 
         # Checks (run via nix flake check)
-        checks = {
+        checks = let
+          # Create vendored cargo dependencies for checks
+          cargoVendorDir = pkgs.rustPlatform.importCargoLock {
+            lockFile = ./Cargo.lock;
+          };
+
+          # Common setup for cargo-based checks
+          cargoSetup = ''
+            export HOME=$(mktemp -d)
+            mkdir -p .cargo
+            cat > .cargo/config.toml << EOF
+            [source.crates-io]
+            replace-with = "vendored-sources"
+
+            [source.vendored-sources]
+            directory = "${cargoVendorDir}"
+            EOF
+          '';
+        in {
           # Formatting check
           formatting = config.treefmt.build.check self;
+
+          # Cargo check (compilation without codegen)
+          cargo-check = pkgs.stdenv.mkDerivation {
+            name = "cargo-check";
+            src = ./.;
+            nativeBuildInputs = nativeBuildInputs;
+            inherit buildInputs;
+            buildPhase = ''
+              ${cargoSetup}
+              cargo check --all --all-targets
+            '';
+            installPhase = ''
+              mkdir -p $out
+              touch $out/success
+            '';
+          };
 
           # Cargo tests
           cargo-test = pkgs.stdenv.mkDerivation {
@@ -277,7 +314,7 @@
             nativeBuildInputs = nativeBuildInputs;
             inherit buildInputs;
             buildPhase = ''
-              export HOME=$(mktemp -d)
+              ${cargoSetup}
               cargo test --all
             '';
             installPhase = ''
@@ -293,7 +330,7 @@
             nativeBuildInputs = nativeBuildInputs;
             inherit buildInputs;
             buildPhase = ''
-              export HOME=$(mktemp -d)
+              ${cargoSetup}
               cargo clippy --all -- -D warnings
             '';
             installPhase = ''

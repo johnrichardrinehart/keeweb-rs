@@ -14,8 +14,11 @@ pub use database::Database;
 pub use entry::{Entry, EntryBuilder};
 pub use error::{Error, Result};
 pub use group::Group;
-pub use kdbx4_decrypt::{parse_kdbx4_header, decrypt_kdbx4_with_key, decrypt_kdbx4_full, decrypt_kdbx4_full_with_password, compute_composite_key, KdfParams, KdfType, Kdbx4Header};
-pub use totp::{TotpConfig, TotpAlgorithm, TotpError};
+pub use kdbx4_decrypt::{
+    Kdbx4Header, KdfParams, KdfType, compute_composite_key, decrypt_kdbx4_full,
+    decrypt_kdbx4_full_with_password, decrypt_kdbx4_with_key, parse_kdbx4_header,
+};
+pub use totp::{TotpAlgorithm, TotpConfig, TotpError};
 
 // Re-export types that users might need
 pub use uuid::Uuid;

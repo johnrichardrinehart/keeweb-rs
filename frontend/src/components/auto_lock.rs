@@ -1,8 +1,8 @@
 //! Auto-lock component with countdown modal
 
 use leptos::*;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 
 use crate::state::{AppState, AppView};
 
@@ -10,6 +10,7 @@ use crate::state::{AppState, AppView};
 const WARNING_TIMEOUT_MS: u32 = 20_000; // 20 seconds
 
 /// Countdown duration after warning (milliseconds)
+#[allow(dead_code)]
 const COUNTDOWN_DURATION_MS: u32 = 10_000; // 10 seconds
 
 /// Auto-lock component - tracks inactivity and shows countdown modal
@@ -109,32 +110,22 @@ pub fn AutoLock() -> impl IntoView {
         let document = window.document().expect("no document");
 
         // Create event handler closures
-        let reset_timer_clone = reset_timer.clone();
+        let reset_timer_clone = reset_timer;
         let on_activity: Closure<dyn Fn()> = Closure::new(move || {
             reset_timer_clone();
         });
 
         // Add listeners for various activity events
-        let _ = document.add_event_listener_with_callback(
-            "mousemove",
-            on_activity.as_ref().unchecked_ref(),
-        );
-        let _ = document.add_event_listener_with_callback(
-            "mousedown",
-            on_activity.as_ref().unchecked_ref(),
-        );
-        let _ = document.add_event_listener_with_callback(
-            "keydown",
-            on_activity.as_ref().unchecked_ref(),
-        );
-        let _ = document.add_event_listener_with_callback(
-            "touchstart",
-            on_activity.as_ref().unchecked_ref(),
-        );
-        let _ = document.add_event_listener_with_callback(
-            "scroll",
-            on_activity.as_ref().unchecked_ref(),
-        );
+        let _ = document
+            .add_event_listener_with_callback("mousemove", on_activity.as_ref().unchecked_ref());
+        let _ = document
+            .add_event_listener_with_callback("mousedown", on_activity.as_ref().unchecked_ref());
+        let _ = document
+            .add_event_listener_with_callback("keydown", on_activity.as_ref().unchecked_ref());
+        let _ = document
+            .add_event_listener_with_callback("touchstart", on_activity.as_ref().unchecked_ref());
+        let _ = document
+            .add_event_listener_with_callback("scroll", on_activity.as_ref().unchecked_ref());
 
         // Forget the closure to keep it alive
         on_activity.forget();

@@ -4,8 +4,8 @@ use js_sys::{Array, Object, Reflect, Uint8Array};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use web_sys::{Blob, BlobPropertyBag, MessageEvent, Url, Worker};
 
 /// Result of a database unlock operation
@@ -32,14 +32,17 @@ fn create_worker_script(base_url: &str) -> String {
     // The worker script as a string - loads keeweb-wasm and uses @very-amused/argon2-wasm for pthread support
     // Uses dynamic import() for ES modules since we're a module worker
     // Base URL is injected to handle subpath deployments (e.g., GitHub Pages)
-    let mut script = String::from(r#"
+    let mut script = String::from(
+        r#"
 // Web Worker for KeeWeb-RS database operations
 // Uses @very-amused/argon2-wasm with pthread support for fast parallel key derivation
 
 // Base URL injected from main thread (handles subpath deployments like GitHub Pages)
-const BASE_URL = ""#);
+const BASE_URL = ""#,
+    );
     script.push_str(base_url);
-    script.push_str(r#"";
+    script.push_str(
+        r#"";
 
 let wasmModule = null;
 let argon2Worker = null;
@@ -333,7 +336,8 @@ async function handleDecryptWithKey(id, { data, password, derivedKey }) {
         });
     }
 }
-"#);
+"#,
+    );
     script
 }
 
@@ -556,8 +560,13 @@ impl WorkerClient {
     }
 
     /// Decrypt database with a pre-computed derived key (from parallel argon2)
-    pub fn decrypt_with_key<F>(&self, data: Vec<u8>, password: String, derived_key: Vec<u8>, callback: F)
-    where
+    pub fn decrypt_with_key<F>(
+        &self,
+        data: Vec<u8>,
+        password: String,
+        derived_key: Vec<u8>,
+        callback: F,
+    ) where
         F: FnOnce(Result<UnlockResult, String>) + 'static,
     {
         let id = {

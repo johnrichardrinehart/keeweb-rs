@@ -101,8 +101,8 @@ pub fn is_argon2_ready() -> bool {
     ARGON2_READY.with(|ready| *ready.borrow())
 }
 
-
 /// Run argon2 hash with parallel threads using argon2-pthread worker
+#[allow(clippy::too_many_arguments)]
 pub fn argon2_hash<F>(
     argon2_type: String,
     password: Vec<u8>,
@@ -410,9 +410,7 @@ impl AppState {
                 Ok(())
             }
             Err(e) => {
-                let error = e
-                    .as_string()
-                    .unwrap_or_else(|| format!("{:?}", e));
+                let error = e.as_string().unwrap_or_else(|| format!("{:?}", e));
                 Err(error)
             }
         }
@@ -459,7 +457,12 @@ impl AppState {
 
         let memory_mb = kdf_params.memory_kb() / 1024;
         let parallelism = kdf_params.parallelism();
-        log::info!("KDF params: memory_kb={}, memory_mb={}, parallelism={}", kdf_params.memory_kb(), memory_mb, parallelism);
+        log::info!(
+            "KDF params: memory_kb={}, memory_mb={}, parallelism={}",
+            kdf_params.memory_kb(),
+            memory_mb,
+            parallelism
+        );
 
         // For high memory (>=256MB), try the helper server first for native speed.
         // The helper doesn't require pthread/SharedArrayBuffer - it runs natively on the server.
@@ -467,143 +470,162 @@ impl AppState {
         // for high-memory databases regardless of browser capabilities.
         // Default KeePassXC memory is 64MB, so this catches users with elevated security settings.
         if memory_mb >= 256 {
-                let argon2_type = kdf_params.kdf_type();
-                let composite_key = kdf_params.composite_key();
-                let salt = kdf_params.salt();
-                let iterations = kdf_params.iterations() as u32;
-                let memory_kb = kdf_params.memory_kb() as u32;
-                let version = kdf_params.version();
+            let argon2_type = kdf_params.kdf_type();
+            let composite_key = kdf_params.composite_key();
+            let salt = kdf_params.salt();
+            let iterations = kdf_params.iterations() as u32;
+            let memory_kb = kdf_params.memory_kb() as u32;
+            let version = kdf_params.version();
 
-                // Try helper server first if configured
-                let helper_configured = helper_client::is_helper_configured();
-                log::info!("High memory ({}MB) database - helper configured: {}", memory_mb, helper_configured);
+            // Try helper server first if configured
+            let helper_configured = helper_client::is_helper_configured();
+            log::info!(
+                "High memory ({}MB) database - helper configured: {}",
+                memory_mb,
+                helper_configured
+            );
 
-                if helper_configured {
-                    let argon2_type_clone = argon2_type.clone();
-                    let composite_key_clone = composite_key.clone();
-                    let salt_clone = salt.clone();
-                    let data_for_helper = data_clone.clone();
-                    let password_for_helper = password_str.clone();
+            if helper_configured {
+                let argon2_type_clone = argon2_type.clone();
+                let composite_key_clone = composite_key.clone();
+                let salt_clone = salt.clone();
+                let data_for_helper = data_clone.clone();
+                let password_for_helper = password_str.clone();
 
-                    spawn_local(async move {
-                        log::info!("Checking helper availability...");
-                        match helper_client::check_helper_available().await {
-                            Ok(true) => {
-                                log::info!("Helper available, calling argon2_hash...");
-                                match helper_client::helper_argon2_hash(
-                                    &argon2_type_clone,
-                                    &composite_key_clone,
-                                    &salt_clone,
-                                    iterations,
-                                    memory_kb,
-                                    parallelism,
-                                    32,
-                                    version,
-                                )
-                                .await
-                                {
-                                    Ok((derived_key, server_time_ms)) => {
-                                        debug_timing!("[TIMING] Argon2 (helper server): {}ms", server_time_ms);
-                                        let decrypt_start = perf_now();
+                spawn_local(async move {
+                    log::info!("Checking helper availability...");
+                    match helper_client::check_helper_available().await {
+                        Ok(true) => {
+                            log::info!("Helper available, calling argon2_hash...");
+                            match helper_client::helper_argon2_hash(
+                                &argon2_type_clone,
+                                &composite_key_clone,
+                                &salt_clone,
+                                iterations,
+                                memory_kb,
+                                parallelism,
+                                32,
+                                version,
+                            )
+                            .await
+                            {
+                                Ok((derived_key, server_time_ms)) => {
+                                    debug_timing!(
+                                        "[TIMING] Argon2 (helper server): {}ms",
+                                        server_time_ms
+                                    );
+                                    let decrypt_start = perf_now();
 
-                                        // Decrypt with the derived key
-                                        worker_decrypt(
-                                            data_for_helper,
-                                            password_for_helper,
-                                            derived_key,
-                                            move |result| {
-                                                spawn_local(async move {
-                                                    match result {
-                                                        Ok(unlock_result) => {
-                                                            let decrypt_time = perf_now() - decrypt_start;
-                                                            debug_timing!("[TIMING] Decryption: {:.0}ms", decrypt_time);
+                                    // Decrypt with the derived key
+                                    worker_decrypt(
+                                        data_for_helper,
+                                        password_for_helper,
+                                        derived_key,
+                                        move |result| {
+                                            spawn_local(async move {
+                                                match result {
+                                                    Ok(unlock_result) => {
+                                                        let decrypt_time =
+                                                            perf_now() - decrypt_start;
+                                                        debug_timing!(
+                                                            "[TIMING] Decryption: {:.0}ms",
+                                                            decrypt_time
+                                                        );
 
-                                                            let entries: Vec<EntryInfo> =
-                                                                serde_json::from_str(
-                                                                    &unlock_result.entries_json,
-                                                                )
-                                                                .unwrap_or_default();
-                                                            let groups: Vec<GroupInfo> =
-                                                                serde_json::from_str(
-                                                                    &unlock_result.groups_json,
-                                                                )
-                                                                .unwrap_or_default();
+                                                        let entries: Vec<EntryInfo> =
+                                                            serde_json::from_str(
+                                                                &unlock_result.entries_json,
+                                                            )
+                                                            .unwrap_or_default();
+                                                        let groups: Vec<GroupInfo> =
+                                                            serde_json::from_str(
+                                                                &unlock_result.groups_json,
+                                                            )
+                                                            .unwrap_or_default();
 
-                                                            state.database.set(None);
-                                                            state.entries.set(entries);
-                                                            state.groups.set(groups);
-                                                            state.pending_file_data.set(None);
-                                                            state.error_message.set(None);
-                                                            state.current_view.set(AppView::Database);
+                                                        state.database.set(None);
+                                                        state.entries.set(entries);
+                                                        state.groups.set(groups);
+                                                        state.pending_file_data.set(None);
+                                                        state.error_message.set(None);
+                                                        state.current_view.set(AppView::Database);
 
-                                                            let total_time = perf_now() - start_time;
-                                                            debug_timing!("[TIMING] Total unlock (helper): {:.0}ms", total_time);
-                                                        }
-                                                        Err(e) => {
-                                                            error_signal.set(Some(e));
-                                                            is_unlocking.set(false);
-                                                        }
+                                                        let total_time = perf_now() - start_time;
+                                                        debug_timing!(
+                                                            "[TIMING] Total unlock (helper): {:.0}ms",
+                                                            total_time
+                                                        );
                                                     }
-                                                });
-                                            },
-                                        );
-                                    }
-                                    Err(e) => {
-                                        // Fall back to single-threaded
-                                        log::warn!("Helper argon2 failed: {:?}, falling back to slow unlock", e);
-                                        do_slow_unlock(
-                                            data_for_helper,
-                                            password_for_helper,
-                                            state,
-                                            start_time,
-                                            error_signal,
-                                            is_unlocking,
-                                            memory_mb,
-                                        );
-                                    }
+                                                    Err(e) => {
+                                                        error_signal.set(Some(e));
+                                                        is_unlocking.set(false);
+                                                    }
+                                                }
+                                            });
+                                        },
+                                    );
+                                }
+                                Err(e) => {
+                                    // Fall back to single-threaded
+                                    log::warn!(
+                                        "Helper argon2 failed: {:?}, falling back to slow unlock",
+                                        e
+                                    );
+                                    do_slow_unlock(
+                                        data_for_helper,
+                                        password_for_helper,
+                                        state,
+                                        start_time,
+                                        error_signal,
+                                        is_unlocking,
+                                        memory_mb,
+                                    );
                                 }
                             }
-                            Ok(false) => {
-                                log::info!("Helper not available (check returned false), falling back to slow unlock");
-                                do_slow_unlock(
-                                    data_for_helper,
-                                    password_for_helper,
-                                    state,
-                                    start_time,
-                                    error_signal,
-                                    is_unlocking,
-                                    memory_mb,
-                                );
-                            }
-                            Err(e) => {
-                                log::warn!("Helper check failed: {}, falling back to slow unlock", e);
-                                do_slow_unlock(
-                                    data_for_helper,
-                                    password_for_helper,
-                                    state,
-                                    start_time,
-                                    error_signal,
-                                    is_unlocking,
-                                    memory_mb,
-                                );
-                            }
                         }
-                    });
-                    return;
-                }
-
-                // No helper configured, use slow fallback
-                log::info!("No helper configured, using slow fallback");
-                do_slow_unlock(
-                    data_clone,
-                    password_str.clone(),
-                    state,
-                    start_time,
-                    error_signal,
-                    is_unlocking,
-                    memory_mb,
-                );
+                        Ok(false) => {
+                            log::info!(
+                                "Helper not available (check returned false), falling back to slow unlock"
+                            );
+                            do_slow_unlock(
+                                data_for_helper,
+                                password_for_helper,
+                                state,
+                                start_time,
+                                error_signal,
+                                is_unlocking,
+                                memory_mb,
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("Helper check failed: {}, falling back to slow unlock", e);
+                            do_slow_unlock(
+                                data_for_helper,
+                                password_for_helper,
+                                state,
+                                start_time,
+                                error_signal,
+                                is_unlocking,
+                                memory_mb,
+                            );
+                        }
+                    }
+                });
                 return;
+            }
+
+            // No helper configured, use slow fallback
+            log::info!("No helper configured, using slow fallback");
+            do_slow_unlock(
+                data_clone,
+                password_str.clone(),
+                state,
+                start_time,
+                error_signal,
+                is_unlocking,
+                memory_mb,
+            );
+            return;
         }
 
         // For normal memory (<1GB), use parallel argon2 if available
@@ -635,35 +657,52 @@ impl AppState {
                                 let decrypt_start = perf_now();
 
                                 // Step 3: Decrypt with the derived key in worker
-                                worker_decrypt(data_clone, password_str, derived_key, move |result| {
-                                    wasm_bindgen_futures::spawn_local(async move {
-                                        match result {
-                                            Ok(unlock_result) => {
-                                                let decrypt_time = perf_now() - decrypt_start;
-                                                debug_timing!("[TIMING] Decryption: {:.0}ms", decrypt_time);
+                                worker_decrypt(
+                                    data_clone,
+                                    password_str,
+                                    derived_key,
+                                    move |result| {
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            match result {
+                                                Ok(unlock_result) => {
+                                                    let decrypt_time = perf_now() - decrypt_start;
+                                                    debug_timing!(
+                                                        "[TIMING] Decryption: {:.0}ms",
+                                                        decrypt_time
+                                                    );
 
-                                                let entries: Vec<EntryInfo> =
-                                                    serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
-                                                let groups: Vec<GroupInfo> =
-                                                    serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+                                                    let entries: Vec<EntryInfo> =
+                                                        serde_json::from_str(
+                                                            &unlock_result.entries_json,
+                                                        )
+                                                        .unwrap_or_default();
+                                                    let groups: Vec<GroupInfo> =
+                                                        serde_json::from_str(
+                                                            &unlock_result.groups_json,
+                                                        )
+                                                        .unwrap_or_default();
 
-                                                state.database.set(None);
-                                                state.entries.set(entries);
-                                                state.groups.set(groups);
-                                                state.pending_file_data.set(None);
-                                                state.error_message.set(None);
-                                                state.current_view.set(AppView::Database);
+                                                    state.database.set(None);
+                                                    state.entries.set(entries);
+                                                    state.groups.set(groups);
+                                                    state.pending_file_data.set(None);
+                                                    state.error_message.set(None);
+                                                    state.current_view.set(AppView::Database);
 
-                                                let total_time = perf_now() - start_time;
-                                                debug_timing!("[TIMING] Total unlock (parallel): {:.0}ms", total_time);
+                                                    let total_time = perf_now() - start_time;
+                                                    debug_timing!(
+                                                        "[TIMING] Total unlock (parallel): {:.0}ms",
+                                                        total_time
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    error_signal.set(Some(e));
+                                                    is_unlocking.set(false);
+                                                }
                                             }
-                                            Err(e) => {
-                                                error_signal.set(Some(e));
-                                                is_unlocking.set(false);
-                                            }
-                                        }
-                                    });
-                                });
+                                        });
+                                    },
+                                );
                             }
                             Err(_) => {
                                 // Fall back to worker-based unlock
@@ -672,12 +711,19 @@ impl AppState {
                                         match result {
                                             Ok(unlock_result) => {
                                                 let total_time = perf_now() - start_time;
-                                                debug_timing!("[TIMING] Total unlock (worker fallback): {:.0}ms", total_time);
+                                                debug_timing!(
+                                                    "[TIMING] Total unlock (worker fallback): {:.0}ms",
+                                                    total_time
+                                                );
 
-                                                let entries: Vec<EntryInfo> =
-                                                    serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
-                                                let groups: Vec<GroupInfo> =
-                                                    serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+                                                let entries: Vec<EntryInfo> = serde_json::from_str(
+                                                    &unlock_result.entries_json,
+                                                )
+                                                .unwrap_or_default();
+                                                let groups: Vec<GroupInfo> = serde_json::from_str(
+                                                    &unlock_result.groups_json,
+                                                )
+                                                .unwrap_or_default();
 
                                                 state.database.set(None);
                                                 state.entries.set(entries);
@@ -706,12 +752,17 @@ impl AppState {
                     match result {
                         Ok(unlock_result) => {
                             let total_time = perf_now() - start_time;
-                            debug_timing!("[TIMING] Total unlock (legacy worker): {:.0}ms", total_time);
+                            debug_timing!(
+                                "[TIMING] Total unlock (legacy worker): {:.0}ms",
+                                total_time
+                            );
 
                             let entries: Vec<EntryInfo> =
-                                serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
+                                serde_json::from_str(&unlock_result.entries_json)
+                                    .unwrap_or_default();
                             let groups: Vec<GroupInfo> =
-                                serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
+                                serde_json::from_str(&unlock_result.groups_json)
+                                    .unwrap_or_default();
 
                             state.database.set(None);
                             state.entries.set(entries);
@@ -819,7 +870,10 @@ fn do_slow_unlock(
             match result {
                 Ok(unlock_result) => {
                     let total_time = perf_now() - start_time;
-                    debug_timing!("[TIMING] Total unlock (slow/single-threaded): {:.0}ms", total_time);
+                    debug_timing!(
+                        "[TIMING] Total unlock (slow/single-threaded): {:.0}ms",
+                        total_time
+                    );
 
                     let entries: Vec<EntryInfo> =
                         serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();

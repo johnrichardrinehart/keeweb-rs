@@ -3,7 +3,9 @@
 //! This crate provides JavaScript bindings for the kdbx-core and kdbx-diff crates,
 //! allowing them to be used in web browsers via WebAssembly.
 
-use kdbx_core::{compute_composite_key, parse_kdbx4_header, Database, Entry, EntryBuilder, Group, KdfType};
+use kdbx_core::{
+    Database, Entry, EntryBuilder, Group, KdfType, compute_composite_key, parse_kdbx4_header,
+};
 use kdbx_core::{TotpAlgorithm, TotpConfig};
 use kdbx_diff::{DatabaseDiff, Merger, Resolution};
 use serde::{Deserialize, Serialize};
@@ -58,9 +60,7 @@ impl WasmDatabase {
     /// Get all entries as JSON (in SimpleEntry format for frontend compatibility)
     #[wasm_bindgen(js_name = getEntries)]
     pub fn get_entries(&self) -> String {
-        let entries: Vec<SimpleEntry> = self.inner.entries()
-            .map(|e| entry_to_simple_entry(e))
-            .collect();
+        let entries: Vec<SimpleEntry> = self.inner.entries().map(entry_to_simple_entry).collect();
         serde_json::to_string(&entries).unwrap_or_default()
     }
 
@@ -144,9 +144,11 @@ impl WasmDatabase {
 
     /// Search entries by query (returns SimpleEntry format for frontend compatibility)
     pub fn search(&self, query: &str) -> String {
-        let results: Vec<SimpleEntry> = self.inner.search(query)
+        let results: Vec<SimpleEntry> = self
+            .inner
+            .search(query)
             .into_iter()
-            .map(|e| entry_to_simple_entry(e))
+            .map(entry_to_simple_entry)
             .collect();
         serde_json::to_string(&results).unwrap_or_default()
     }
@@ -274,8 +276,8 @@ fn parse_resolution(s: &str) -> Result<Resolution, JsValue> {
         "newest" | "takenewest" | "take_newest" => Ok(Resolution::TakeNewest),
         _ => {
             // Assume it's a manual value
-            if s.starts_with("manual:") {
-                Ok(Resolution::Manual(s[7..].to_string()))
+            if let Some(stripped) = s.strip_prefix("manual:") {
+                Ok(Resolution::Manual(stripped.to_string()))
             } else {
                 Err(JsValue::from_str(&format!("Unknown resolution: {}", s)))
             }
@@ -343,8 +345,7 @@ impl WasmKdfParams {
 /// instead of the internal rust-argon2.
 #[wasm_bindgen(js_name = getKdfParams)]
 pub fn get_kdf_params(data: &[u8], password: &str) -> Result<WasmKdfParams, JsValue> {
-    let header = parse_kdbx4_header(data)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let header = parse_kdbx4_header(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     let kdf_type = match header.kdf_params.kdf_type {
         KdfType::Argon2d => "argon2d",
@@ -388,8 +389,8 @@ pub fn decrypt_with_derived_key(
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // Parse the XML to extract entries and groups
-    let (entries_json, groups_json, metadata_json) = parse_kdbx_xml(decrypted_xml.as_bytes())
-        .map_err(|e| JsValue::from_str(&e))?;
+    let (entries_json, groups_json, metadata_json) =
+        parse_kdbx_xml(decrypted_xml.as_bytes()).map_err(|e| JsValue::from_str(&e))?;
 
     Ok(WasmDecryptResult {
         entries_json,
@@ -411,8 +412,8 @@ pub fn unlock_database(data: &[u8], password: &str) -> Result<WasmDecryptResult,
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // Parse the XML to extract entries and groups
-    let (entries_json, groups_json, metadata_json) = parse_kdbx_xml(decrypted_xml.as_bytes())
-        .map_err(|e| JsValue::from_str(&e))?;
+    let (entries_json, groups_json, metadata_json) =
+        parse_kdbx_xml(decrypted_xml.as_bytes()).map_err(|e| JsValue::from_str(&e))?;
 
     Ok(WasmDecryptResult {
         entries_json,
@@ -496,10 +497,10 @@ impl TotpResult {
 /// Returns a TotpResult with the code and metadata, or an error message.
 #[wasm_bindgen(js_name = generateTotp)]
 pub fn generate_totp(otp_value: &str) -> Result<TotpResult, JsValue> {
-    let config = TotpConfig::parse(otp_value)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let config = TotpConfig::parse(otp_value).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    let code = config.generate()
+    let code = config
+        .generate()
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     Ok(TotpResult {
@@ -515,8 +516,7 @@ pub fn generate_totp(otp_value: &str) -> Result<TotpResult, JsValue> {
 /// Returns JSON with: secret, digits, period, algorithm, issuer, label
 #[wasm_bindgen(js_name = parseTotpConfig)]
 pub fn parse_totp_config(otp_value: &str) -> Result<String, JsValue> {
-    let config = TotpConfig::parse(otp_value)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let config = TotpConfig::parse(otp_value).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     #[derive(Serialize)]
     struct TotpConfigJson {
@@ -539,8 +539,7 @@ pub fn parse_totp_config(otp_value: &str) -> Result<String, JsValue> {
         label: config.label,
     };
 
-    serde_json::to_string(&json)
-        .map_err(|e| JsValue::from_str(&e.to_string()))
+    serde_json::to_string(&json).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Check if a string looks like a valid TOTP configuration
@@ -551,11 +550,10 @@ pub fn is_valid_totp(otp_value: &str) -> bool {
 
 /// Simple XML parser for KDBX format - extracts entries and groups
 fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
-
     // Skip inner header (binary format before XML)
     let xml_start = find_xml_start(xml_data)?;
-    let xml_str = std::str::from_utf8(&xml_data[xml_start..])
-        .map_err(|_| "Invalid UTF-8 in XML")?;
+    let xml_str =
+        std::str::from_utf8(&xml_data[xml_start..]).map_err(|_| "Invalid UTF-8 in XML")?;
 
     // Simple XML parsing - look for Entry and Group elements
     let mut entries: Vec<SimpleEntry> = Vec::new();
@@ -618,7 +616,12 @@ fn parse_groups_and_entries_recursive(
                         // Recursively parse within this group
                         if let Some(first_close) = group_xml.find('>') {
                             let inner_xml = &group_xml[first_close + 1..];
-                            parse_groups_and_entries_recursive(inner_xml, Some(group_uuid), groups, entries);
+                            parse_groups_and_entries_recursive(
+                                inner_xml,
+                                Some(group_uuid),
+                                groups,
+                                entries,
+                            );
                         }
                     }
                     search_pos = abs_end;
@@ -669,7 +672,12 @@ fn parse_groups_and_entries_recursive(
 
                         if let Some(first_close) = group_xml.find('>') {
                             let inner_xml = &group_xml[first_close + 1..];
-                            parse_groups_and_entries_recursive(inner_xml, Some(group_uuid), groups, entries);
+                            parse_groups_and_entries_recursive(
+                                inner_xml,
+                                Some(group_uuid),
+                                groups,
+                                entries,
+                            );
                         }
                     }
                     search_pos = abs_end;
@@ -776,7 +784,9 @@ fn find_xml_start(data: &[u8]) -> Result<usize, String> {
         if pos + 5 > data.len() {
             break;
         }
-        let entry_len = u32::from_le_bytes([data[pos+1], data[pos+2], data[pos+3], data[pos+4]]) as usize;
+        let entry_len =
+            u32::from_le_bytes([data[pos + 1], data[pos + 2], data[pos + 3], data[pos + 4]])
+                as usize;
         pos += 5 + entry_len;
 
         if entry_type == 0 {
@@ -869,7 +879,15 @@ fn entry_to_simple_entry(entry: &Entry) -> SimpleEntry {
     let custom_attributes: HashMap<String, CustomAttribute> = entry
         .custom_fields
         .iter()
-        .map(|(k, v)| (k.clone(), CustomAttribute { value: v.clone(), protected: false }))
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                CustomAttribute {
+                    value: v.clone(),
+                    protected: false,
+                },
+            )
+        })
         .collect();
 
     // Convert tags
@@ -899,7 +917,7 @@ fn entry_to_simple_entry(entry: &Entry) -> SimpleEntry {
         expiry_time,
         icon_id: entry.icon_id,
         custom_icon_uuid: None, // kdbx_core::Entry doesn't track custom icons
-        history: Vec::new(), // kdbx_core::Entry doesn't track history
+        history: Vec::new(),    // kdbx_core::Entry doesn't track history
     }
 }
 
@@ -1023,8 +1041,7 @@ fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     let (expires, expiry_time) = extract_expiry_info(xml_to_parse);
 
     // Extract icon info
-    let icon_id = extract_tag_value(xml_to_parse, "IconID")
-        .and_then(|s| s.parse().ok());
+    let icon_id = extract_tag_value(xml_to_parse, "IconID").and_then(|s| s.parse().ok());
     let custom_icon_uuid = extract_tag_value(xml_to_parse, "CustomIconUUID");
 
     // Parse history entries
@@ -1158,6 +1175,7 @@ fn extract_custom_attributes(xml: &str) -> HashMap<String, CustomAttribute> {
 }
 
 /// Extract value from a <String> element (handles both protected and unprotected values)
+#[allow(dead_code)]
 fn extract_string_value_from_string_elem(string_elem: &str) -> Option<String> {
     extract_string_value_with_protection(string_elem).map(|(v, _)| v)
 }
@@ -1174,8 +1192,8 @@ fn extract_string_value_with_protection(string_elem: &str) -> Option<(String, bo
 
     // Check if Protected="True" or ProtectInMemory="True" is present (case-insensitive)
     let tag_lower = tag_content.to_lowercase();
-    let is_protected = tag_lower.contains("protected=\"true\"")
-        || tag_lower.contains("protectinmemory=\"true\"");
+    let is_protected =
+        tag_lower.contains("protected=\"true\"") || tag_lower.contains("protectinmemory=\"true\"");
 
     let content_start = value_tag_end + 1;
 
@@ -1228,8 +1246,7 @@ fn parse_history_entry(xml: &str) -> Option<HistoryEntry> {
 fn parse_group_element(xml: &str) -> Option<SimpleGroup> {
     let uuid = extract_tag_value(xml, "UUID")?;
     let name = extract_tag_value(xml, "Name").unwrap_or_default();
-    let icon_id = extract_tag_value(xml, "IconID")
-        .and_then(|s| s.parse().ok());
+    let icon_id = extract_tag_value(xml, "IconID").and_then(|s| s.parse().ok());
 
     Some(SimpleGroup {
         uuid,

@@ -4,11 +4,11 @@ use leptos::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::{
-    auto_lock::AutoLock, entry_detail::EntryDetail, entry_list::EntryList,
-    file_picker::FilePicker, sidebar::Sidebar, unlock_dialog::UnlockDialog,
+    auto_lock::AutoLock, entry_detail::EntryDetail, entry_list::EntryList, file_picker::FilePicker,
+    sidebar::Sidebar, unlock_dialog::UnlockDialog,
 };
 use crate::helper_client;
-use crate::state::{init_argon2, AppState, AppView};
+use crate::state::{AppState, AppView, init_argon2};
 
 /// Root application component
 #[component]
@@ -24,16 +24,14 @@ pub fn App() -> impl IntoView {
     // Initialize argon2-pthread worker in background (for parallel KDF)
     // Note: The wasm-bindgen-rayon thread pool is initialized by initializer.js
     // before this code runs, so is_rayon_ready() will return true if it succeeded
-    init_argon2(|result| {
-        match result {
-            Ok(()) => {
-                #[cfg(debug_assertions)]
-                log::info!("Argon2-pthread initialized (parallel KDF ready)");
-            }
-            Err(_e) => {
-                #[cfg(debug_assertions)]
-                log::warn!("Argon2-pthread init failed: {} (will use fallback)", _e);
-            }
+    init_argon2(|result| match result {
+        Ok(()) => {
+            #[cfg(debug_assertions)]
+            log::info!("Argon2-pthread initialized (parallel KDF ready)");
+        }
+        Err(_e) => {
+            #[cfg(debug_assertions)]
+            log::warn!("Argon2-pthread init failed: {} (will use fallback)", _e);
         }
     });
 
@@ -41,7 +39,10 @@ pub fn App() -> impl IntoView {
     spawn_local(async {
         if helper_client::try_auto_connect().await {
             #[cfg(debug_assertions)]
-            log::info!("Auto-connected to helper server at {}", helper_client::DEFAULT_HELPER_URL);
+            log::info!(
+                "Auto-connected to helper server at {}",
+                helper_client::DEFAULT_HELPER_URL
+            );
         }
     });
 
