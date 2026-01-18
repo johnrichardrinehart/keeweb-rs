@@ -270,6 +270,14 @@ pub struct AttachmentInfo {
     pub size: Option<usize>,
 }
 
+/// Custom attribute with protection status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomAttributeInfo {
+    pub value: String,
+    #[serde(default)]
+    pub protected: bool,
+}
+
 /// Entry data for display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryInfo {
@@ -285,9 +293,9 @@ pub struct EntryInfo {
     /// TOTP/OTP configuration (otpauth:// URI or bare secret)
     #[serde(default)]
     pub otp: Option<String>,
-    /// Custom attributes (non-standard String fields)
+    /// Custom attributes (non-standard String fields) with protection status
     #[serde(default)]
-    pub custom_attributes: std::collections::HashMap<String, String>,
+    pub custom_attributes: std::collections::HashMap<String, CustomAttributeInfo>,
     /// File attachments
     #[serde(default)]
     pub attachments: Vec<AttachmentInfo>,
