@@ -219,7 +219,7 @@ self.onmessage = async function(event) {
         self.postMessage({
             id,
             type: 'error',
-            error: e.toString()
+            error: e ? (e.message || e.toString()) : 'Unknown error'
         });
     }
 };
@@ -302,7 +302,7 @@ async function handleUnlock(id, { data, password }) {
         self.postMessage({
             id,
             type: 'unlock_error',
-            error: e.toString()
+            error: e ? (e.message || e.toString()) : 'Unknown error'
         });
     }
 }
@@ -329,7 +329,7 @@ async function handleDecryptWithKey(id, { data, password, derivedKey }) {
         self.postMessage({
             id,
             type: 'unlock_error',
-            error: e.toString()
+            error: e ? (e.message || e.toString()) : 'Unknown error'
         });
     }
 }
@@ -464,7 +464,12 @@ impl WorkerClient {
 
         // Set up error handler
         let onerror = Closure::wrap(Box::new(move |event: web_sys::ErrorEvent| {
-            log::error!("Worker error: {:?}", event.message());
+            let msg = event.message();
+            if !msg.is_empty() {
+                log::error!("Worker error: {}", msg);
+            } else {
+                log::error!("Worker error (no message)");
+            }
         }) as Box<dyn FnMut(web_sys::ErrorEvent)>);
 
         worker.set_onerror(Some(onerror.as_ref().unchecked_ref()));
