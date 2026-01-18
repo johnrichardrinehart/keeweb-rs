@@ -55,20 +55,22 @@ impl WasmDatabase {
         serde_json::to_string(&self.inner.metadata()).unwrap_or_default()
     }
 
-    /// Get all entries as JSON
+    /// Get all entries as JSON (in SimpleEntry format for frontend compatibility)
     #[wasm_bindgen(js_name = getEntries)]
     pub fn get_entries(&self) -> String {
-        let entries: Vec<&Entry> = self.inner.entries().collect();
+        let entries: Vec<SimpleEntry> = self.inner.entries()
+            .map(|e| entry_to_simple_entry(e))
+            .collect();
         serde_json::to_string(&entries).unwrap_or_default()
     }
 
-    /// Get a single entry by UUID as JSON
+    /// Get a single entry by UUID as JSON (in SimpleEntry format for frontend compatibility)
     #[wasm_bindgen(js_name = getEntry)]
     pub fn get_entry(&self, uuid: &str) -> Option<String> {
         let uuid = uuid::Uuid::parse_str(uuid).ok()?;
         self.inner
             .get_entry(&uuid)
-            .map(|e| serde_json::to_string(e).unwrap_or_default())
+            .map(|e| serde_json::to_string(&entry_to_simple_entry(e)).unwrap_or_default())
     }
 
     /// Add a new entry from JSON
@@ -140,9 +142,12 @@ impl WasmDatabase {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Search entries by query
+    /// Search entries by query (returns SimpleEntry format for frontend compatibility)
     pub fn search(&self, query: &str) -> String {
-        let results: Vec<&Entry> = self.inner.search(query);
+        let results: Vec<SimpleEntry> = self.inner.search(query)
+            .into_iter()
+            .map(|e| entry_to_simple_entry(e))
+            .collect();
         serde_json::to_string(&results).unwrap_or_default()
     }
 
@@ -533,12 +538,8 @@ fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
     let mut entries: Vec<SimpleEntry> = Vec::new();
     let mut groups: Vec<SimpleGroup> = Vec::new();
 
-    // Parse groups
-    for group_match in find_elements(xml_str, "Group") {
-        if let Some(group) = parse_group_element(&group_match) {
-            groups.push(group);
-        }
-    }
+    // Parse groups using proper nested matching
+    parse_groups_recursive(xml_str, None, &mut groups);
 
     // Parse entries - find top-level entries only (not those inside <History>)
     // We need to parse entries from the original XML to get their history,
@@ -551,11 +552,164 @@ fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
         }
     }
 
+    // Post-process to assign parent_group to entries based on XML structure
+    assign_entry_parents(xml_str, &groups, &mut entries);
+
     let entries_json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
     let groups_json = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".to_string());
     let metadata_json = "{}".to_string(); // TODO: parse metadata
 
     Ok((entries_json, groups_json, metadata_json))
+}
+
+/// Parse groups recursively with proper nesting and parent tracking
+fn parse_groups_recursive(xml: &str, parent_uuid: Option<String>, groups: &mut Vec<SimpleGroup>) {
+    let mut search_pos = 0;
+
+    while search_pos < xml.len() {
+        // Find next <Group> or <Group ...>
+        let start_exact = xml[search_pos..].find("<Group>");
+        let start_attr = xml[search_pos..].find("<Group ");
+
+        let start = match (start_exact, start_attr) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+
+        match start {
+            Some(rel_start) => {
+                let abs_start = search_pos + rel_start;
+
+                // Find matching </Group> using depth tracking
+                if let Some(end_pos) = find_matching_close_tag(&xml[abs_start..], "Group") {
+                    let abs_end = abs_start + end_pos;
+                    let group_xml = &xml[abs_start..abs_end];
+
+                    // Parse this group's attributes (UUID, Name, IconID)
+                    if let Some(mut group) = parse_group_element(group_xml) {
+                        let group_uuid = group.uuid.clone();
+                        group.parent = parent_uuid.clone();
+                        groups.push(group);
+
+                        // Recursively parse child groups within this group
+                        // Skip past the opening tag to avoid matching ourselves
+                        if let Some(first_close) = group_xml.find('>') {
+                            let inner_xml = &group_xml[first_close + 1..];
+                            parse_groups_recursive(inner_xml, Some(group_uuid), groups);
+                        }
+                    }
+
+                    search_pos = abs_end;
+                } else {
+                    break;
+                }
+            }
+            None => break,
+        }
+    }
+}
+
+/// Find matching close tag accounting for nesting depth
+fn find_matching_close_tag(xml: &str, tag: &str) -> Option<usize> {
+    let open_tag_exact = format!("<{}>", tag);
+    let open_tag_attr = format!("<{} ", tag);
+    let close_tag = format!("</{}>", tag);
+
+    // We start AT the opening tag, so depth is 1
+    let mut depth = 1;
+
+    // Skip past the initial opening tag
+    let initial_end = xml.find('>')? + 1;
+    let mut pos = initial_end;
+
+    while pos < xml.len() && depth > 0 {
+        let remaining = &xml[pos..];
+
+        // Find next open or close tag
+        let next_open_exact = remaining.find(&open_tag_exact);
+        let next_open_attr = remaining.find(&open_tag_attr);
+        let next_close = remaining.find(&close_tag);
+
+        let next_open = match (next_open_exact, next_open_attr) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+
+        match (next_open, next_close) {
+            (Some(open_pos), Some(close_pos)) if open_pos < close_pos => {
+                // Open tag comes first - increase depth
+                depth += 1;
+                pos += open_pos + 1;
+            }
+            (_, Some(close_pos)) => {
+                // Close tag (or close comes before open)
+                depth -= 1;
+                if depth == 0 {
+                    return Some(pos + close_pos + close_tag.len());
+                }
+                pos += close_pos + close_tag.len();
+            }
+            (Some(open_pos), None) => {
+                // Only open tag found
+                depth += 1;
+                pos += open_pos + 1;
+            }
+            (None, None) => {
+                break;
+            }
+        }
+    }
+
+    None
+}
+
+/// Assign parent_group to entries by finding which group contains each entry's UUID
+fn assign_entry_parents(xml: &str, groups: &[SimpleGroup], entries: &mut [SimpleEntry]) {
+    // For each entry, find the innermost group that contains it
+    for entry in entries.iter_mut() {
+        let entry_uuid_pattern = format!("<UUID>{}</UUID>", &entry.uuid);
+
+        // Find the position of this entry's UUID in the XML
+        if let Some(entry_pos) = xml.find(&entry_uuid_pattern) {
+            // Find the innermost group containing this position
+            let mut best_group: Option<&str> = None;
+            let mut best_start = 0;
+
+            for group in groups {
+                let group_uuid_pattern = format!("<UUID>{}</UUID>", &group.uuid);
+
+                // Find where this group starts
+                if let Some(group_uuid_pos) = xml.find(&group_uuid_pattern) {
+                    // Find the <Group> tag before this UUID
+                    let before_uuid = &xml[..group_uuid_pos];
+                    if let Some(group_start) = before_uuid.rfind("<Group") {
+                        // Find the matching </Group> for this group
+                        if let Some(group_end) = find_matching_close_tag(&xml[group_start..], "Group") {
+                            let group_abs_end = group_start + group_end;
+
+                            // Check if entry is within this group
+                            if entry_pos > group_start && entry_pos < group_abs_end {
+                                // This group contains the entry
+                                // Keep track of the innermost (latest starting) group
+                                if group_start > best_start {
+                                    best_start = group_start;
+                                    best_group = Some(&group.uuid);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(parent_uuid) = best_group {
+                entry.parent_group = Some(parent_uuid.to_string());
+            }
+        }
+    }
 }
 
 fn find_xml_start(data: &[u8]) -> Result<usize, String> {
@@ -620,9 +774,9 @@ struct SimpleEntry {
     parent_group: Option<String>,
     /// TOTP/OTP configuration (otpauth:// URI or bare secret)
     otp: Option<String>,
-    /// Custom attributes (non-standard String fields)
+    /// Custom attributes (non-standard String fields) with protection status
     #[serde(default)]
-    custom_attributes: HashMap<String, String>,
+    custom_attributes: HashMap<String, CustomAttribute>,
     /// File attachments
     #[serde(default)]
     attachments: Vec<Attachment>,
@@ -652,6 +806,46 @@ struct SimpleGroup {
     name: String,
     parent: Option<String>,
     icon_id: Option<u32>,
+}
+
+/// Convert a kdbx_core::Entry to SimpleEntry format for frontend compatibility
+fn entry_to_simple_entry(entry: &Entry) -> SimpleEntry {
+    // Convert custom_fields to custom_attributes (with protected: false since kdbx_core doesn't track this)
+    let custom_attributes: HashMap<String, CustomAttribute> = entry
+        .custom_fields
+        .iter()
+        .map(|(k, v)| (k.clone(), CustomAttribute { value: v.clone(), protected: false }))
+        .collect();
+
+    // Convert tags
+    let tags = entry.tags.clone();
+
+    // Convert expiry info
+    let expires = entry.expires_enabled;
+    let expiry_time = if entry.expires_enabled {
+        entry.expires.map(|dt| dt.to_rfc3339())
+    } else {
+        None
+    };
+
+    SimpleEntry {
+        uuid: entry.uuid.to_string(),
+        title: entry.title.clone(),
+        username: entry.username.clone(),
+        password: entry.password().map(|s| s.to_string()),
+        url: entry.url.clone(),
+        notes: entry.notes.clone(),
+        parent_group: entry.parent_group.map(|u| u.to_string()),
+        otp: None, // kdbx_core::Entry doesn't have OTP field - would need to extract from custom_fields
+        custom_attributes,
+        attachments: Vec::new(), // kdbx_core::Entry doesn't track attachments
+        tags,
+        expires,
+        expiry_time,
+        icon_id: entry.icon_id,
+        custom_icon_uuid: None, // kdbx_core::Entry doesn't track custom icons
+        history: Vec::new(), // kdbx_core::Entry doesn't track history
+    }
 }
 
 /// Find top-level Entry elements (not those nested inside <History>)
@@ -708,63 +902,6 @@ fn find_top_level_entries(xml: &str) -> Vec<String> {
     }
 
     results
-}
-
-/// Find the position of the matching closing tag, accounting for nested tags
-/// xml should start AT the opening tag (e.g., "<Entry>...")
-fn find_matching_close_tag(xml: &str, tag: &str) -> Option<usize> {
-    let open_tag_exact = format!("<{}>", tag);
-    let open_tag_attr = format!("<{} ", tag);
-    let close_tag = format!("</{}>", tag);
-
-    // We start AT an opening tag, so depth starts at 1
-    let mut depth = 1;
-
-    // Skip past the initial opening tag
-    let initial_tag_end = xml.find('>')? + 1;
-    let mut pos = initial_tag_end;
-
-    while pos < xml.len() {
-        // Look for next open or close tag
-        let next_open_exact = xml[pos..].find(&open_tag_exact);
-        let next_open_attr = xml[pos..].find(&open_tag_attr);
-        let next_close = xml[pos..].find(&close_tag);
-
-        let next_open = match (next_open_exact, next_open_attr) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        };
-
-        match (next_open, next_close) {
-            (Some(open), Some(close)) if open < close => {
-                // Found open tag first - nested element
-                depth += 1;
-                pos += open + 1; // Move past the '<'
-            }
-            (_, Some(close)) => {
-                // Found close tag (or close tag is before open tag)
-                depth -= 1;
-                if depth == 0 {
-                    // This is the matching close tag
-                    return Some(pos + close + close_tag.len());
-                }
-                pos += close + close_tag.len();
-            }
-            (Some(open), None) => {
-                // Only found open tag, no close tag
-                depth += 1;
-                pos += open + 1;
-            }
-            (None, None) => {
-                // No more tags found
-                return None;
-            }
-        }
-    }
-
-    None
 }
 
 /// Remove all <History>...</History> sections from XML to avoid parsing old entry versions
@@ -841,6 +978,13 @@ const STANDARD_FIELDS: &[&str] = &["Title", "UserName", "Password", "URL", "Note
 
 /// OTP-related field names (handled separately)
 const OTP_FIELDS: &[&str] = &["otp", "OTP", "TOTP Seed", "TOTP", "totp"];
+
+/// Custom attribute with protection status
+#[derive(Serialize, Clone)]
+struct CustomAttribute {
+    value: String,
+    protected: bool,
+}
 
 fn parse_entry_element(xml: &str) -> Option<SimpleEntry> {
     // Extract the part before <History> to parse the main entry data
@@ -990,7 +1134,7 @@ fn extract_binary_ref(binary_elem: &str) -> Option<u32> {
 }
 
 /// Extract all custom attributes from an entry's XML
-fn extract_custom_attributes(xml: &str) -> HashMap<String, String> {
+fn extract_custom_attributes(xml: &str) -> HashMap<String, CustomAttribute> {
     let mut attributes = HashMap::new();
 
     // Find all <String> elements
@@ -1002,10 +1146,10 @@ fn extract_custom_attributes(xml: &str) -> HashMap<String, String> {
                 continue;
             }
 
-            // Extract the value
-            if let Some(value) = extract_string_value_from_string_elem(&string_elem) {
+            // Extract the value and protection status
+            if let Some((value, protected)) = extract_string_value_with_protection(&string_elem) {
                 if !value.is_empty() {
-                    attributes.insert(key, value);
+                    attributes.insert(key, CustomAttribute { value, protected });
                 }
             }
         }
@@ -1016,12 +1160,22 @@ fn extract_custom_attributes(xml: &str) -> HashMap<String, String> {
 
 /// Extract value from a <String> element (handles both protected and unprotected values)
 fn extract_string_value_from_string_elem(string_elem: &str) -> Option<String> {
+    extract_string_value_with_protection(string_elem).map(|(v, _)| v)
+}
+
+/// Extract value and protection status from a <String> element
+fn extract_string_value_with_protection(string_elem: &str) -> Option<(String, bool)> {
     // Find <Value or <Value Protected="True"> in the element
     let value_tag_start = string_elem.find("<Value")?;
     let value_tag_area = &string_elem[value_tag_start..];
 
     // Find the closing > of the Value tag
     let value_tag_end = value_tag_area.find('>')?;
+    let tag_content = &value_tag_area[..value_tag_end];
+
+    // Check if Protected="True" is present
+    let is_protected = tag_content.contains("Protected=\"True\"");
+
     let content_start = value_tag_end + 1;
 
     // Find </Value>
@@ -1033,7 +1187,7 @@ fn extract_string_value_from_string_elem(string_elem: &str) -> Option<String> {
     if value.is_empty() {
         None
     } else {
-        Some(value.to_string())
+        Some((value.to_string(), is_protected))
     }
 }
 
