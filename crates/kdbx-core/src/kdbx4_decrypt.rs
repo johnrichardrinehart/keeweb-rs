@@ -577,10 +577,10 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
             Ok(Event::Start(ref e)) => {
                 let name = e.name();
                 if name.as_ref() == b"Value" {
-                    // Check for Protected="True" attribute
+                    // Check for Protected="True" or ProtectInMemory="True" attribute
                     let is_protected = e.attributes().any(|attr| {
                         if let Ok(attr) = attr {
-                            attr.key.as_ref() == b"Protected" &&
+                            (attr.key.as_ref() == b"Protected" || attr.key.as_ref() == b"ProtectInMemory") &&
                             (attr.value.as_ref() == b"True" || attr.value.as_ref() == b"true")
                         } else {
                             false
@@ -589,8 +589,9 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
 
                     if is_protected {
                         in_protected_value = true;
-                        // Write the tag without the Protected attribute
-                        let new_elem = BytesStart::new("Value");
+                        // Write the tag WITH ProtectInMemory="True" so the parser knows it was protected
+                        let mut new_elem = BytesStart::new("Value");
+                        new_elem.push_attribute(("ProtectInMemory", "True"));
                         writer.write_event(Event::Start(new_elem))
                             .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
                         continue;
@@ -635,7 +636,7 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
                 if name.as_ref() == b"Value" {
                     let is_protected = e.attributes().any(|attr| {
                         if let Ok(attr) = attr {
-                            attr.key.as_ref() == b"Protected" &&
+                            (attr.key.as_ref() == b"Protected" || attr.key.as_ref() == b"ProtectInMemory") &&
                             (attr.value.as_ref() == b"True" || attr.value.as_ref() == b"true")
                         } else {
                             false
@@ -643,8 +644,9 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
                     });
 
                     if is_protected {
-                        // Write as <Value></Value> without Protected attribute
-                        let new_elem = BytesStart::new("Value");
+                        // Write as <Value ProtectInMemory="True"/> to preserve protection status
+                        let mut new_elem = BytesStart::new("Value");
+                        new_elem.push_attribute(("ProtectInMemory", "True"));
                         writer.write_event(Event::Empty(new_elem))
                             .map_err(|e| Error::ParseError(format!("XML write error: {}", e)))?;
                         continue;
