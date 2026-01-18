@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::password_generator::PasswordGenerator;
-use crate::state::{AppState, AttachmentInfo, CustomAttributeInfo, HistoryEntryInfo};
+use crate::state::{AppState, AttachmentInfo, HistoryEntryInfo};
 use crate::utils::clipboard;
 
 mod totp;
@@ -83,7 +83,7 @@ fn EntryDetailContent(
     url_is_empty: bool,
     notes: String,
     otp: Option<String>,
-    custom_attributes: HashMap<String, CustomAttributeInfo>,
+    custom_attributes: HashMap<String, String>,
     attachments: Vec<AttachmentInfo>,
     tags: Vec<String>,
     expires: bool,
@@ -310,14 +310,10 @@ fn EntryDetailContent(
                 view! {
                     <div class="custom-attributes-section">
                         <h3 class="section-header">"Custom Attributes"</h3>
-                        {attrs.into_iter().map(|(key, attr_info)| {
+                        {attrs.into_iter().map(|(key, value)| {
                             let key_for_copy = key.clone();
-                            let value_for_copy = attr_info.value.clone();
-                            let is_protected = attr_info.protected;
+                            let value_for_copy = value.clone();
                             let copied = copied_field;
-
-                            // Create a signal for showing protected value
-                            let show_protected = create_rw_signal(false);
 
                             let copy_value = move |_| {
                                 let val = value_for_copy.clone();
@@ -332,60 +328,17 @@ fn EntryDetailContent(
 
                             let key_display = key.clone();
                             let key_for_check = key.clone();
-                            let value_display = attr_info.value.clone();
-                            let value_for_input = attr_info.value.clone();
 
                             view! {
                                 <div class="field-group">
-                                    <label>
-                                        {key_display}
-                                        {if is_protected {
-                                            view! {
-                                                <span class="protected-badge" title="Protected field">" 🔒"</span>
-                                            }.into_view()
-                                        } else {
-                                            view! { <span></span> }.into_view()
-                                        }}
-                                    </label>
+                                    <label>{key_display}</label>
                                     <div class="field-value-row">
-                                        {if is_protected {
-                                            view! {
-                                                <input
-                                                    type=move || if show_protected.get() { "text" } else { "password" }
-                                                    class="field-input"
-                                                    value=value_for_input
-                                                    readonly=true
-                                                />
-                                                <button
-                                                    class="btn-icon"
-                                                    on:click=move |_| show_protected.update(|v| *v = !*v)
-                                                    title=move || if show_protected.get() { "Hide value" } else { "Show value" }
-                                                >
-                                                    {move || if show_protected.get() {
-                                                        view! {
-                                                            <svg viewBox="0 0 24 24" width="18" height="18">
-                                                                <path fill="currentColor" d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
-                                                            </svg>
-                                                        }
-                                                    } else {
-                                                        view! {
-                                                            <svg viewBox="0 0 24 24" width="18" height="18">
-                                                                <path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                                                            </svg>
-                                                        }
-                                                    }}
-                                                </button>
-                                            }.into_view()
-                                        } else {
-                                            view! {
-                                                <input
-                                                    type="text"
-                                                    class="field-input"
-                                                    value=value_display
-                                                    readonly=true
-                                                />
-                                            }.into_view()
-                                        }}
+                                        <input
+                                            type="text"
+                                            class="field-input"
+                                            value=value
+                                            readonly=true
+                                        />
                                         <button
                                             class="btn-icon"
                                             class:copied=move || copied_field.get() == Some(format!("attr_{}", key_for_check))
