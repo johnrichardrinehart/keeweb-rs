@@ -217,6 +217,116 @@ pub enum AppView {
     Database,
 }
 
+/// Theme preference (2-state: light or dark)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Theme {
+    /// Light mode
+    Light,
+    /// Dark mode
+    Dark,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        // Default to system preference
+        if system_prefers_dark() {
+            Theme::Dark
+        } else {
+            Theme::Light
+        }
+    }
+}
+
+const THEME_STORAGE_KEY: &str = "keeweb-rs-theme";
+
+/// Load theme preference from localStorage
+fn load_theme_preference() -> Theme {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return Theme::default(),
+    };
+
+    let storage = match window.local_storage() {
+        Ok(Some(s)) => s,
+        _ => return Theme::default(),
+    };
+
+    match storage.get_item(THEME_STORAGE_KEY) {
+        Ok(Some(value)) => match value.as_str() {
+            "light" => Theme::Light,
+            "dark" => Theme::Dark,
+            // Legacy "system" or unknown values: use system preference
+            _ => Theme::default(),
+        },
+        _ => Theme::default(),
+    }
+}
+
+/// Save theme preference to localStorage
+fn save_theme_preference(theme: Theme) {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return,
+    };
+
+    let storage = match window.local_storage() {
+        Ok(Some(s)) => s,
+        _ => return,
+    };
+
+    let value = match theme {
+        Theme::Light => "light",
+        Theme::Dark => "dark",
+    };
+
+    let _ = storage.set_item(THEME_STORAGE_KEY, value);
+}
+
+/// Check if system prefers dark mode
+fn system_prefers_dark() -> bool {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return true, // Default to dark if can't detect
+    };
+
+    window
+        .match_media("(prefers-color-scheme: dark)")
+        .ok()
+        .flatten()
+        .map(|mq| mq.matches())
+        .unwrap_or(true)
+}
+
+/// Apply theme to the document
+pub fn apply_theme(theme: Theme) {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return,
+    };
+
+    let document = match window.document() {
+        Some(d) => d,
+        None => return,
+    };
+
+    let html = match document.document_element() {
+        Some(e) => e,
+        None => return,
+    };
+
+    // Set data-theme attribute on <html> element
+    let theme_value = match theme {
+        Theme::Dark => "dark",
+        Theme::Light => "light",
+    };
+    let _ = html.set_attribute("data-theme", theme_value);
+}
+
+/// Initialize theme on app startup
+pub fn init_theme(theme: Theme) {
+    apply_theme(theme);
+}
+
 /// Source of a database file
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DatabaseSource {
@@ -354,10 +464,15 @@ pub struct AppState {
     /// Backend URL (if configured)
     #[allow(dead_code)]
     pub backend_url: RwSignal<Option<String>>,
+    /// Theme preference
+    pub theme: RwSignal<Theme>,
 }
 
 impl AppState {
     pub fn new() -> Self {
+        // Load theme preference from localStorage
+        let initial_theme = load_theme_preference();
+
         Self {
             current_view: create_rw_signal(AppView::FilePicker),
             database: create_rw_signal(None),
@@ -371,7 +486,24 @@ impl AppState {
             search_query: create_rw_signal(String::new()),
             error_message: create_rw_signal(None),
             backend_url: create_rw_signal(None),
+            theme: create_rw_signal(initial_theme),
         }
+    }
+
+    /// Set the theme and persist to localStorage
+    pub fn set_theme(&self, theme: Theme) {
+        self.theme.set(theme);
+        save_theme_preference(theme);
+        apply_theme(theme);
+    }
+
+    /// Toggle between light and dark themes
+    pub fn cycle_theme(&self) {
+        let next = match self.theme.get() {
+            Theme::Light => Theme::Dark,
+            Theme::Dark => Theme::Light,
+        };
+        self.set_theme(next);
     }
 
     /// Set pending file data and show unlock dialog

@@ -5,10 +5,10 @@ use wasm_bindgen_futures::spawn_local;
 
 use crate::components::{
     auto_lock::AutoLock, entry_detail::EntryDetail, entry_list::EntryList, file_picker::FilePicker,
-    sidebar::Sidebar, unlock_dialog::UnlockDialog,
+    sidebar::Sidebar, theme_toggle::ThemeToggle, unlock_dialog::UnlockDialog,
 };
 use crate::helper_client;
-use crate::state::{AppState, AppView, init_argon2};
+use crate::state::{AppState, AppView, init_argon2, init_theme};
 
 /// Root application component
 #[component]
@@ -20,6 +20,9 @@ pub fn App() -> impl IntoView {
     // Create the global application state
     let state = AppState::new();
     provide_context(state);
+
+    // Initialize theme (applies CSS)
+    init_theme(state.theme.get());
 
     // Initialize argon2-pthread worker in background (for parallel KDF)
     // Note: The wasm-bindgen-rayon thread pool is initialized by initializer.js
@@ -85,6 +88,7 @@ fn Header() -> impl IntoView {
                 </Show>
             </div>
             <div class="header-right">
+                <ThemeToggle />
                 <Show when=move || state.current_view.get() == AppView::Database>
                     <button
                         class="btn btn-secondary btn-lock"

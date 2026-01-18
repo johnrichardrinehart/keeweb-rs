@@ -1,7 +1,9 @@
 /* KeeWeb-RS Styles */
 
-:root {
-    /* Colors */
+/* Dark theme (default) */
+:root,
+[data-theme="dark"] {
+    /* Colors - Dark */
     --color-bg: #1a1a2e;
     --color-bg-secondary: #16213e;
     --color-bg-tertiary: #0f3460;
@@ -19,6 +21,49 @@
     --color-warning: #f59e0b;
     --color-danger: #dc2626;
 
+    /* Shadows - Dark */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.4);
+
+    /* Scrollbar - Dark */
+    --scrollbar-track: var(--color-bg);
+    --scrollbar-thumb: var(--color-border);
+    --scrollbar-thumb-hover: var(--color-secondary);
+}
+
+/* Light theme */
+[data-theme="light"] {
+    /* Colors - Light */
+    --color-bg: #f9fafb;
+    --color-bg-secondary: #f3f4f6;
+    --color-bg-tertiary: #e5e7eb;
+    --color-surface: #ffffff;
+    --color-surface-hover: #f3f4f6;
+    --color-primary: #2563eb;
+    --color-primary-hover: #1d4ed8;
+    --color-secondary: #6b7280;
+    --color-text: #1f2937;
+    --color-text-secondary: #4b5563;
+    --color-text-muted: #9ca3af;
+    --color-border: #d1d5db;
+    --color-error: #dc2626;
+    --color-success: #16a34a;
+    --color-warning: #d97706;
+    --color-danger: #b91c1c;
+
+    /* Shadows - Light */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+
+    /* Scrollbar - Light */
+    --scrollbar-track: var(--color-bg);
+    --scrollbar-thumb: var(--color-border);
+    --scrollbar-thumb-hover: var(--color-secondary);
+}
+
+:root {
     /* Spacing */
     --spacing-xs: 0.25rem;
     --spacing-sm: 0.5rem;
@@ -30,11 +75,6 @@
     --radius-sm: 0.25rem;
     --radius-md: 0.5rem;
     --radius-lg: 0.75rem;
-
-    /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.4);
 
     /* Transitions */
     --transition-fast: 150ms ease;
@@ -77,6 +117,44 @@ html, body {
     display: flex;
     align-items: center;
     gap: var(--spacing-md);
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+/* Theme Toggle */
+.theme-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.theme-toggle:hover {
+    background-color: var(--color-surface-hover);
+    color: var(--color-text);
+    border-color: var(--color-primary);
+}
+
+.theme-toggle:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.theme-toggle svg {
+    width: 20px;
+    height: 20px;
 }
 
 .app-title {
