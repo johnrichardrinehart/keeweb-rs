@@ -2,6 +2,8 @@
 
 use leptos::*;
 use leptos::spawn_local;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use web_sys::KeyboardEvent;
 
 use crate::helper_client;
@@ -69,6 +71,45 @@ pub fn UnlockDialog() -> impl IntoView {
     create_effect(move |_| {
         if let Some(input) = password_input_ref.get() {
             let _ = input.focus();
+        }
+    });
+
+    // Heartbeat: check helper availability every 1 second
+    let heartbeat_interval: StoredValue<Option<i32>> = store_value(None);
+
+    create_effect(move |_| {
+        // Start heartbeat interval
+        let window = web_sys::window().expect("no window");
+        let closure: Closure<dyn Fn()> = Closure::new(move || {
+            spawn_local(async move {
+                match helper_client::check_helper_available_fresh().await {
+                    Ok(available) => {
+                        helper_enabled.set(available);
+                    }
+                    Err(_) => {
+                        helper_enabled.set(false);
+                    }
+                }
+            });
+        });
+
+        let interval_id = window
+            .set_interval_with_callback_and_timeout_and_arguments_0(
+                closure.as_ref().unchecked_ref(),
+                1000, // 1 second
+            )
+            .expect("set_interval failed");
+
+        closure.forget();
+        heartbeat_interval.set_value(Some(interval_id));
+    });
+
+    // Clean up heartbeat on unmount
+    on_cleanup(move || {
+        if let Some(interval_id) = heartbeat_interval.get_value() {
+            if let Some(window) = web_sys::window() {
+                window.clear_interval_with_handle(interval_id);
+            }
         }
     });
 

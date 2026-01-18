@@ -189,7 +189,7 @@ pub fn is_helper_available() -> bool {
     HELPER_AVAILABLE.with(|available| available.borrow().unwrap_or(false))
 }
 
-/// Check if helper server is available (async)
+/// Check if helper server is available (async, uses cache)
 pub async fn check_helper_available() -> Result<bool, String> {
     // Return cached result if available
     let cached = HELPER_AVAILABLE.with(|available| *available.borrow());
@@ -197,9 +197,17 @@ pub async fn check_helper_available() -> Result<bool, String> {
         return Ok(available);
     }
 
+    // No cache, do a fresh check
+    check_helper_available_fresh().await
+}
+
+/// Check if helper server is available (async, bypasses cache)
+/// Use this for heartbeat/polling to detect server going up or down
+pub async fn check_helper_available_fresh() -> Result<bool, String> {
     // Check if client is configured
     let client_exists = HELPER_CLIENT.with(|client| client.borrow().is_some());
     if !client_exists {
+        HELPER_AVAILABLE.with(|a| *a.borrow_mut() = Some(false));
         return Ok(false);
     }
 
@@ -226,6 +234,7 @@ pub async fn check_helper_available() -> Result<bool, String> {
             }
         }
     } else {
+        HELPER_AVAILABLE.with(|a| *a.borrow_mut() = Some(false));
         Ok(false)
     }
 }
