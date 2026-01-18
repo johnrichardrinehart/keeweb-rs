@@ -128,9 +128,9 @@ fn EntryListItem(
 fn get_standard_icon(icon_id: Option<u32>, fallback: &str) -> String {
     match icon_id {
         Some(id) if id <= 68 => {
-            // Use vendored KeePassXC icon
+            // Use vendored KeePassXC icon with relative path for subpath deployments
             format!(
-                r#"<img src="/icons/database/{}.svg" alt="icon" width="20" height="20" style="object-fit: contain;">"#,
+                r#"<img src="icons/database/{}.svg" alt="icon" width="20" height="20" style="object-fit: contain;">"#,
                 id
             )
         }
