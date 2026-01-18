@@ -46,6 +46,7 @@ let argon2Worker = null;
 let argon2Ready = false;
 let getKdfParams = null;
 let decryptWithDerivedKey = null;
+let unlockDatabase = null;
 let WasmDatabase = null;
 
 // Queue for argon2 worker responses (argon2 library doesn't echo back IDs)
@@ -139,6 +140,7 @@ async function initKeewebWasm() {
 
         getKdfParams = module.getKdfParams;
         decryptWithDerivedKey = module.decryptWithDerivedKey;
+        unlockDatabase = module.unlockDatabase;
         WasmDatabase = module.WasmDatabase;
     } catch (e) {
         throw e;
@@ -275,27 +277,27 @@ async function handleUnlockFast(id, { data, password }, mode = 'pthread') {
     }
 }
 
-// Standard unlock (fallback, uses rust-argon2)
+// Standard unlock (uses unlockDatabase which runs rust-argon2 internally)
+// This uses the same XML parsing path as handleUnlockFast, ensuring protected attributes work
 async function handleUnlock(id, { data, password }) {
     try {
         const dataArray = data instanceof Uint8Array ? data : new Uint8Array(data);
-        const db = new WasmDatabase(dataArray, password);
 
-        const entriesJson = db.getEntries();
-        const groupsJson = db.getGroups();
-        const metadataJson = db.getMetadata();
+        // Use unlockDatabase which:
+        // 1. Runs Argon2 internally (slower than JS SIMD, but unified code path)
+        // 2. Decrypts the payload
+        // 3. Preserves ProtectInMemory attributes in XML parsing
+        const result = unlockDatabase(dataArray, password);
 
         self.postMessage({
             id,
             type: 'unlock_success',
             result: {
-                entriesJson,
-                groupsJson,
-                metadataJson,
+                entriesJson: result.entriesJson,
+                groupsJson: result.groupsJson,
+                metadataJson: result.metadataJson,
             }
         });
-
-        self.currentDatabase = db;
     } catch (e) {
         self.postMessage({
             id,

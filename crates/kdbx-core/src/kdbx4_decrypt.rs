@@ -672,6 +672,55 @@ pub fn decrypt_protected_values(xml: &str, stream_key: &[u8]) -> Result<String> 
         .map_err(|e| Error::ParseError(format!("UTF-8 conversion failed: {}", e)))
 }
 
+/// Decrypt KDBX4 database with password only (runs Argon2 internally)
+///
+/// This function handles the complete decryption pipeline:
+/// 1. Parses the KDBX4 header to extract KDF parameters
+/// 2. Runs Argon2 KDF internally to derive the transformed key
+/// 3. Decrypts the database payload
+/// 4. Preserves ProtectInMemory attributes in the output XML
+///
+/// This is slower than `decrypt_kdbx4_full` with a pre-computed key, but provides
+/// a unified code path that ensures protected attributes are always correctly handled.
+pub fn decrypt_kdbx4_full_with_password(data: &[u8], password: &str) -> Result<String> {
+    use argon2::{Argon2, Version, Params, Algorithm};
+
+    let header = parse_kdbx4_header(data)?;
+
+    // Compute composite key from password
+    let composite_key = compute_composite_key(password);
+
+    // Run Argon2 KDF to get transformed key
+    let algorithm = match header.kdf_params.kdf_type {
+        KdfType::Argon2d => Algorithm::Argon2d,
+        KdfType::Argon2id => Algorithm::Argon2id,
+    };
+
+    let version = match header.kdf_params.version {
+        0x10 => Version::V0x10,
+        _ => Version::V0x13, // Default to latest version
+    };
+
+    let params = Params::new(
+        header.kdf_params.memory_kb as u32,
+        header.kdf_params.iterations as u32,
+        header.kdf_params.parallelism,
+        Some(32), // Output length
+    ).map_err(|e| Error::DecryptError(format!("Argon2 params error: {}", e)))?;
+
+    let argon2 = Argon2::new(algorithm, version, params);
+
+    let mut transformed_key = [0u8; 32];
+    argon2.hash_password_into(
+        &composite_key,
+        &header.kdf_params.salt,
+        &mut transformed_key,
+    ).map_err(|e| Error::DecryptError(format!("Argon2 error: {}", e)))?;
+
+    // Now use the existing function with the derived key
+    decrypt_kdbx4_full(data, password, &transformed_key)
+}
+
 /// Decrypt KDBX4 database and return XML with decrypted protected values
 pub fn decrypt_kdbx4_full(
     data: &[u8],

@@ -398,6 +398,29 @@ pub fn decrypt_with_derived_key(
     })
 }
 
+/// Full unlock: runs Argon2 internally and decrypts using our XML parsing
+/// This ensures protected attributes are properly detected regardless of unlock path.
+#[wasm_bindgen(js_name = unlockDatabase)]
+pub fn unlock_database(data: &[u8], password: &str) -> Result<WasmDecryptResult, JsValue> {
+    // Use our full decryption path which:
+    // 1. Parses header and extracts KDF params
+    // 2. Runs Argon2 internally
+    // 3. Decrypts the payload
+    // 4. Preserves ProtectInMemory attributes in the XML
+    let decrypted_xml = kdbx_core::decrypt_kdbx4_full_with_password(data, password)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    // Parse the XML to extract entries and groups
+    let (entries_json, groups_json, metadata_json) = parse_kdbx_xml(decrypted_xml.as_bytes())
+        .map_err(|e| JsValue::from_str(&e))?;
+
+    Ok(WasmDecryptResult {
+        entries_json,
+        groups_json,
+        metadata_json,
+    })
+}
+
 /// Result of decryption with derived key
 #[wasm_bindgen]
 pub struct WasmDecryptResult {
