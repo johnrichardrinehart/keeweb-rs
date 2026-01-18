@@ -455,6 +455,8 @@ pub struct AppState {
     pub groups: RwSignal<Vec<GroupInfo>>,
     /// Currently selected group UUID
     pub selected_group: RwSignal<Option<String>>,
+    /// Currently selected tag
+    pub selected_tag: RwSignal<Option<String>>,
     /// Currently selected entry UUID
     pub selected_entry: RwSignal<Option<String>>,
     /// Search query
@@ -482,6 +484,7 @@ impl AppState {
             entries: create_rw_signal(Vec::new()),
             groups: create_rw_signal(Vec::new()),
             selected_group: create_rw_signal(None),
+            selected_tag: create_rw_signal(None),
             selected_entry: create_rw_signal(None),
             search_query: create_rw_signal(String::new()),
             error_message: create_rw_signal(None),
@@ -921,6 +924,7 @@ impl AppState {
         self.entries.set(Vec::new());
         self.groups.set(Vec::new());
         self.selected_group.set(None);
+        self.selected_tag.set(None);
         self.selected_entry.set(None);
         self.search_query.set(String::new());
         self.current_view.set(AppView::FilePicker);
@@ -937,17 +941,24 @@ impl AppState {
         }
     }
 
-    /// Get filtered entries based on search query and selected group
+    /// Get filtered entries based on search query, selected group, or selected tag
     pub fn filtered_entries(&self) -> Vec<EntryInfo> {
         let entries = self.entries.get();
         let query = self.search_query.get().to_lowercase();
         let selected_group = self.selected_group.get();
+        let selected_tag = self.selected_tag.get();
 
         let mut filtered: Vec<EntryInfo> = entries
             .into_iter()
             .filter(|entry| {
-                // Filter by group if selected
-                if let Some(ref group_uuid) = selected_group {
+                // Filter by tag if selected (takes priority over group)
+                if let Some(ref tag) = selected_tag {
+                    if !entry.tags.contains(tag) {
+                        return false;
+                    }
+                }
+                // Filter by group if selected (and no tag selected)
+                else if let Some(ref group_uuid) = selected_group {
                     if entry.group_uuid.as_ref() != Some(group_uuid) {
                         return false;
                     }

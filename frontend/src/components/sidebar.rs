@@ -1,6 +1,7 @@
 //! Sidebar component with group tree navigation
 
 use leptos::*;
+use std::collections::BTreeSet;
 
 use crate::state::{AppState, GroupInfo};
 
@@ -15,31 +16,74 @@ pub fn Sidebar() -> impl IntoView {
         build_group_tree(&groups)
     };
 
+    // Collect all unique tags from entries
+    let all_tags = move || {
+        let entries = state.entries.get();
+        let mut tags: BTreeSet<String> = BTreeSet::new();
+        for entry in entries {
+            for tag in entry.tags {
+                if !tag.is_empty() {
+                    tags.insert(tag);
+                }
+            }
+        }
+        tags.into_iter().collect::<Vec<_>>()
+    };
+
     view! {
         <aside class="sidebar">
-            <div class="sidebar-header">
-                <h3>"Groups"</h3>
-            </div>
+            <nav class="sidebar-nav">
+                // All Entries at the top
+                <div class="sidebar-section">
+                    <GroupItem
+                        uuid=None
+                        name="All Entries".to_string()
+                        depth=0
+                        has_children=false
+                        is_tag=false
+                    />
+                </div>
 
-            <nav class="group-tree">
-                // All entries option
-                <GroupItem
-                    uuid=None
-                    name="All Entries".to_string()
-                    depth=0
-                    has_children=false
-                />
+                <div class="sidebar-divider"></div>
 
-                // Group tree
-                <For
-                    each=group_tree
-                    key=|group| group.uuid.clone()
-                    children=move |group| {
-                        view! {
-                            <GroupTreeNode group=group depth=0 />
-                        }
-                    }
-                />
+                // Groups section
+                <div class="sidebar-section">
+                    <div class="sidebar-section-header">
+                        <h3>"Groups"</h3>
+                    </div>
+                    <div class="group-tree">
+                        <For
+                            each=group_tree
+                            key=|group| group.uuid.clone()
+                            children=move |group| {
+                                view! {
+                                    <GroupTreeNode group=group depth=0 />
+                                }
+                            }
+                        />
+                    </div>
+                </div>
+
+                // Tags section (only show if there are tags)
+                <Show when=move || !all_tags().is_empty()>
+                    <div class="sidebar-divider"></div>
+                    <div class="sidebar-section">
+                        <div class="sidebar-section-header">
+                            <h3>"Tags"</h3>
+                        </div>
+                        <div class="tag-list">
+                            <For
+                                each=all_tags
+                                key=|tag| tag.clone()
+                                children=move |tag| {
+                                    view! {
+                                        <TagItem tag=tag />
+                                    }
+                                }
+                            />
+                        </div>
+                    </div>
+                </Show>
             </nav>
 
             <div class="sidebar-footer">
@@ -64,6 +108,7 @@ fn GroupTreeNode(group: GroupNode, depth: usize) -> impl IntoView {
                 name=group.name.clone()
                 depth=depth
                 has_children=has_children
+                is_tag=false
             />
             {if has_children {
                 let children = children.clone();
@@ -94,6 +139,7 @@ fn GroupItem(
     name: String,
     depth: usize,
     has_children: bool,
+    #[prop(default = false)] is_tag: bool,
 ) -> impl IntoView {
     let state = expect_context::<AppState>();
     let uuid_for_selected = uuid.clone();
@@ -101,13 +147,21 @@ fn GroupItem(
 
     let indent = format!("padding-left: {}rem", depth as f32 * 1.0 + 0.5);
 
+    // Check if this item is selected (for groups, not tags)
+    let is_selected = move || {
+        !is_tag
+            && state.selected_group.get() == uuid_for_selected
+            && state.selected_tag.get().is_none()
+    };
+
     view! {
         <div
             class="group-item"
-            class:selected=move || state.selected_group.get() == uuid_for_selected
+            class:selected=is_selected
             style=indent
             on:click=move |_| {
                 state.selected_group.set(uuid_for_click.clone());
+                state.selected_tag.set(None);
                 state.selected_entry.set(None);
             }
         >
@@ -127,6 +181,35 @@ fn GroupItem(
                 }}
             </span>
             <span class="group-name">{name}</span>
+        </div>
+    }
+}
+
+/// A clickable tag item
+#[component]
+fn TagItem(tag: String) -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let tag_for_selected = tag.clone();
+    let tag_for_click = tag.clone();
+
+    let is_selected = move || state.selected_tag.get().as_ref() == Some(&tag_for_selected);
+
+    view! {
+        <div
+            class="group-item tag-item"
+            class:selected=is_selected
+            on:click=move |_| {
+                state.selected_tag.set(Some(tag_for_click.clone()));
+                state.selected_group.set(None);
+                state.selected_entry.set(None);
+            }
+        >
+            <span class="group-icon tag-icon">
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                    <path fill="currentColor" d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/>
+                </svg>
+            </span>
+            <span class="group-name">{tag}</span>
         </div>
     }
 }
