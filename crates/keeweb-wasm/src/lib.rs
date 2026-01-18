@@ -1149,11 +1149,11 @@ fn extract_string_value_with_protection(string_elem: &str) -> Option<(String, bo
     let value_tag_end = value_tag_area.find('>')?;
     let tag_content = &value_tag_area[..value_tag_end];
 
-    // Check if Protected="True" is present (case-insensitive for the value)
+    // Check if Protected="True" or ProtectInMemory="True" is present
     let is_protected = tag_content.contains("Protected=\"True\"")
         || tag_content.contains("Protected=\"true\"")
-        || tag_content.contains("protected=\"True\"")
-        || tag_content.contains("protected=\"true\"");
+        || tag_content.contains("ProtectInMemory=\"True\"")
+        || tag_content.contains("ProtectInMemory=\"true\"");
 
     let content_start = value_tag_end + 1;
 
