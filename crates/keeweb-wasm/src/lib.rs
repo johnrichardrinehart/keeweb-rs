@@ -538,22 +538,8 @@ fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
     let mut entries: Vec<SimpleEntry> = Vec::new();
     let mut groups: Vec<SimpleGroup> = Vec::new();
 
-    // Parse groups using proper nested matching
-    parse_groups_recursive(xml_str, None, &mut groups);
-
-    // Parse entries - find top-level entries only (not those inside <History>)
-    // We need to parse entries from the original XML to get their history,
-    // but only parse top-level Entry elements (not nested ones in History)
-    let entry_elements = find_top_level_entries(xml_str);
-
-    for entry_match in entry_elements.iter() {
-        if let Some(entry) = parse_entry_element(&entry_match) {
-            entries.push(entry);
-        }
-    }
-
-    // Post-process to assign parent_group to entries based on XML structure
-    assign_entry_parents(xml_str, &groups, &mut entries);
+    // Parse groups and entries together, tracking parent group for each entry
+    parse_groups_and_entries_recursive(xml_str, None, &mut groups, &mut entries);
 
     let entries_json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
     let groups_json = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".to_string());
@@ -562,51 +548,142 @@ fn parse_kdbx_xml(xml_data: &[u8]) -> Result<(String, String, String), String> {
     Ok((entries_json, groups_json, metadata_json))
 }
 
-/// Parse groups recursively with proper nesting and parent tracking
-fn parse_groups_recursive(xml: &str, parent_uuid: Option<String>, groups: &mut Vec<SimpleGroup>) {
+/// Parse groups and entries recursively, tracking parent group for entries
+fn parse_groups_and_entries_recursive(
+    xml: &str,
+    current_group_uuid: Option<String>,
+    groups: &mut Vec<SimpleGroup>,
+    entries: &mut Vec<SimpleEntry>,
+) {
     let mut search_pos = 0;
 
     while search_pos < xml.len() {
-        // Find next <Group> or <Group ...>
-        let start_exact = xml[search_pos..].find("<Group>");
-        let start_attr = xml[search_pos..].find("<Group ");
+        // Find next <Group> or <Entry> (whichever comes first)
+        let group_start_exact = xml[search_pos..].find("<Group>");
+        let group_start_attr = xml[search_pos..].find("<Group ");
+        let entry_start_exact = xml[search_pos..].find("<Entry>");
+        let entry_start_attr = xml[search_pos..].find("<Entry ");
 
-        let start = match (start_exact, start_attr) {
+        let group_start = match (group_start_exact, group_start_attr) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) => Some(a),
             (None, Some(b)) => Some(b),
             (None, None) => None,
         };
 
-        match start {
-            Some(rel_start) => {
-                let abs_start = search_pos + rel_start;
+        let entry_start = match (entry_start_exact, entry_start_attr) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
 
-                // Find matching </Group> using depth tracking
+        // Determine which comes first
+        match (group_start, entry_start) {
+            (Some(g), Some(e)) if g < e => {
+                // Group comes first
+                let abs_start = search_pos + g;
                 if let Some(end_pos) = find_matching_close_tag(&xml[abs_start..], "Group") {
                     let abs_end = abs_start + end_pos;
                     let group_xml = &xml[abs_start..abs_end];
 
-                    // Parse this group's attributes (UUID, Name, IconID)
                     if let Some(mut group) = parse_group_element(group_xml) {
                         let group_uuid = group.uuid.clone();
-                        group.parent = parent_uuid.clone();
+                        group.parent = current_group_uuid.clone();
                         groups.push(group);
 
-                        // Recursively parse child groups within this group
-                        // Skip past the opening tag to avoid matching ourselves
+                        // Recursively parse within this group
                         if let Some(first_close) = group_xml.find('>') {
                             let inner_xml = &group_xml[first_close + 1..];
-                            parse_groups_recursive(inner_xml, Some(group_uuid), groups);
+                            parse_groups_and_entries_recursive(inner_xml, Some(group_uuid), groups, entries);
                         }
                     }
-
                     search_pos = abs_end;
                 } else {
                     break;
                 }
             }
-            None => break,
+            (Some(g), Some(e)) if e < g => {
+                // Entry comes first
+                let abs_start = search_pos + e;
+
+                // Check if inside <History> - skip if so
+                let before = &xml[search_pos..search_pos + e];
+                let last_history_open = before.rfind("<History>");
+                let last_history_close = before.rfind("</History>");
+                let is_inside_history = match (last_history_open, last_history_close) {
+                    (Some(open), Some(close)) => open > close,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+
+                if let Some(end_pos) = find_matching_close_tag(&xml[abs_start..], "Entry") {
+                    let abs_end = abs_start + end_pos;
+
+                    if !is_inside_history {
+                        let entry_xml = &xml[abs_start..abs_end];
+                        if let Some(mut entry) = parse_entry_element(entry_xml) {
+                            entry.parent_group = current_group_uuid.clone();
+                            entries.push(entry);
+                        }
+                    }
+                    search_pos = abs_end;
+                } else {
+                    break;
+                }
+            }
+            (Some(g), None) => {
+                // Only group found
+                let abs_start = search_pos + g;
+                if let Some(end_pos) = find_matching_close_tag(&xml[abs_start..], "Group") {
+                    let abs_end = abs_start + end_pos;
+                    let group_xml = &xml[abs_start..abs_end];
+
+                    if let Some(mut group) = parse_group_element(group_xml) {
+                        let group_uuid = group.uuid.clone();
+                        group.parent = current_group_uuid.clone();
+                        groups.push(group);
+
+                        if let Some(first_close) = group_xml.find('>') {
+                            let inner_xml = &group_xml[first_close + 1..];
+                            parse_groups_and_entries_recursive(inner_xml, Some(group_uuid), groups, entries);
+                        }
+                    }
+                    search_pos = abs_end;
+                } else {
+                    break;
+                }
+            }
+            (None, Some(e)) => {
+                // Only entry found
+                let abs_start = search_pos + e;
+
+                let before = &xml[search_pos..search_pos + e];
+                let last_history_open = before.rfind("<History>");
+                let last_history_close = before.rfind("</History>");
+                let is_inside_history = match (last_history_open, last_history_close) {
+                    (Some(open), Some(close)) => open > close,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+
+                if let Some(end_pos) = find_matching_close_tag(&xml[abs_start..], "Entry") {
+                    let abs_end = abs_start + end_pos;
+
+                    if !is_inside_history {
+                        let entry_xml = &xml[abs_start..abs_end];
+                        if let Some(mut entry) = parse_entry_element(entry_xml) {
+                            entry.parent_group = current_group_uuid.clone();
+                            entries.push(entry);
+                        }
+                    }
+                    search_pos = abs_end;
+                } else {
+                    break;
+                }
+            }
+            (None, None) => break,
+            _ => break,
         }
     }
 }
@@ -665,51 +742,6 @@ fn find_matching_close_tag(xml: &str, tag: &str) -> Option<usize> {
     }
 
     None
-}
-
-/// Assign parent_group to entries by finding which group contains each entry's UUID
-fn assign_entry_parents(xml: &str, groups: &[SimpleGroup], entries: &mut [SimpleEntry]) {
-    // For each entry, find the innermost group that contains it
-    for entry in entries.iter_mut() {
-        let entry_uuid_pattern = format!("<UUID>{}</UUID>", &entry.uuid);
-
-        // Find the position of this entry's UUID in the XML
-        if let Some(entry_pos) = xml.find(&entry_uuid_pattern) {
-            // Find the innermost group containing this position
-            let mut best_group: Option<&str> = None;
-            let mut best_start = 0;
-
-            for group in groups {
-                let group_uuid_pattern = format!("<UUID>{}</UUID>", &group.uuid);
-
-                // Find where this group starts
-                if let Some(group_uuid_pos) = xml.find(&group_uuid_pattern) {
-                    // Find the <Group> tag before this UUID
-                    let before_uuid = &xml[..group_uuid_pos];
-                    if let Some(group_start) = before_uuid.rfind("<Group") {
-                        // Find the matching </Group> for this group
-                        if let Some(group_end) = find_matching_close_tag(&xml[group_start..], "Group") {
-                            let group_abs_end = group_start + group_end;
-
-                            // Check if entry is within this group
-                            if entry_pos > group_start && entry_pos < group_abs_end {
-                                // This group contains the entry
-                                // Keep track of the innermost (latest starting) group
-                                if group_start > best_start {
-                                    best_start = group_start;
-                                    best_group = Some(&group.uuid);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(parent_uuid) = best_group {
-                entry.parent_group = Some(parent_uuid.to_string());
-            }
-        }
-    }
 }
 
 fn find_xml_start(data: &[u8]) -> Result<usize, String> {
@@ -846,62 +878,6 @@ fn entry_to_simple_entry(entry: &Entry) -> SimpleEntry {
         custom_icon_uuid: None, // kdbx_core::Entry doesn't track custom icons
         history: Vec::new(), // kdbx_core::Entry doesn't track history
     }
-}
-
-/// Find top-level Entry elements (not those nested inside <History>)
-fn find_top_level_entries(xml: &str) -> Vec<String> {
-    let mut results = Vec::new();
-    let open_tag_exact = "<Entry>";
-    let open_tag_attr = "<Entry ";
-
-    let mut search_pos = 0;
-    while search_pos < xml.len() {
-        // Find either <Entry> or <Entry with attributes
-        let start_exact = xml[search_pos..].find(open_tag_exact);
-        let start_attr = xml[search_pos..].find(open_tag_attr);
-
-        let start = match (start_exact, start_attr) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        };
-
-        match start {
-            Some(rel_start) => {
-                let abs_start = search_pos + rel_start;
-
-                // Check if this Entry is inside a <History> section
-                // Look backwards for <History> and </History>
-                let before = &xml[..abs_start];
-                let last_history_open = before.rfind("<History>");
-                let last_history_close = before.rfind("</History>");
-
-                let is_inside_history = match (last_history_open, last_history_close) {
-                    (Some(open), Some(close)) => open > close, // Inside if <History> is after </History>
-                    (Some(_), None) => true,                   // Inside if <History> but no </History>
-                    _ => false,
-                };
-
-                // Find the matching </Entry> (accounting for nesting)
-                if let Some(end_pos) = find_matching_close_tag(&xml[abs_start..], "Entry") {
-                    let abs_end = abs_start + end_pos;
-
-                    if !is_inside_history {
-                        let entry_xml = &xml[abs_start..abs_end];
-                        results.push(entry_xml.to_string());
-                    }
-
-                    search_pos = abs_end;
-                } else {
-                    break;
-                }
-            }
-            None => break,
-        }
-    }
-
-    results
 }
 
 /// Remove all <History>...</History> sections from XML to avoid parsing old entry versions
