@@ -233,6 +233,9 @@ impl Database {
                 .collect();
         }
 
+        // Set icon ID if present
+        entry.icon_id = kp_entry.icon_id.map(|id| id as u32);
+
         entry
     }
 
