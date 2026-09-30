@@ -1,6 +1,7 @@
 //! File system watcher service
 
 use crate::state::{AppState, ConflictInfo, FileEvent, KdbxFileInfo};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
@@ -11,37 +12,27 @@ use tokio::sync::mpsc;
 pub async fn start_watcher(
     state: Arc<AppState>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let directory = state
+        .config
+        .storage
+        .database_directory
+        .clone()
+        .ok_or_else(|| std::io::Error::other("database_directory is not configured"))?;
     let (tx, mut rx) = mpsc::channel::<Result<Event, notify::Error>>(100);
 
-    // Initial scan
-    for dir in &state.config.storage.watch_directories {
-        if dir.exists() {
-            scan_directory(&state, dir).await?;
-        }
-    }
+    scan_directory(&state, &directory).await?;
 
-    // Create watcher
     let mut watcher = RecommendedWatcher::new(
         move |res| {
             let _ = tx.blocking_send(res);
         },
         Config::default(),
     )?;
+    watcher.watch(&directory, RecursiveMode::NonRecursive)?;
+    tracing::info!("Watching database directory: {:?}", directory);
 
-    // Watch directories
-    for dir in &state.config.storage.watch_directories {
-        if dir.exists() {
-            watcher.watch(dir, RecursiveMode::Recursive)?;
-            tracing::info!("Watching directory: {:?}", dir);
-        } else {
-            tracing::warn!("Directory does not exist: {:?}", dir);
-        }
-    }
-
-    // Spawn handler task
     let state_clone = state.clone();
     tokio::spawn(async move {
-        // Keep watcher alive
         let _watcher = watcher;
 
         while let Some(result) = rx.recv().await {
@@ -49,8 +40,8 @@ pub async fn start_watcher(
                 Ok(event) => {
                     handle_event(&state_clone, event).await;
                 }
-                Err(e) => {
-                    tracing::error!("Watcher error: {:?}", e);
+                Err(error) => {
+                    tracing::error!("Watcher error: {:?}", error);
                 }
             }
         }
@@ -59,118 +50,103 @@ pub async fn start_watcher(
     Ok(())
 }
 
-/// Handle a file system event
 async fn handle_event(state: &Arc<AppState>, event: Event) {
     use notify::EventKind;
 
     for path in event.paths {
-        let path_str = path.to_string_lossy().to_string();
-
-        // Only care about .kdbx files
-        if !path_str.ends_with(".kdbx") {
+        if !is_kdbx_path(&path) {
             continue;
         }
 
+        let path_string = path.to_string_lossy().to_string();
         match event.kind {
             EventKind::Create(_) | EventKind::Modify(_) => {
-                // Check if this is a conflict file
-                if is_conflict_file(&path_str, &state.config.syncthing.conflict_pattern) {
-                    if let Some(original) = find_original_file(&path_str) {
-                        tracing::info!("Conflict detected: {} -> {}", original, path_str);
-
-                        state
-                            .add_conflict(ConflictInfo {
-                                original_path: original.clone(),
-                                conflict_path: path_str.clone(),
-                                detected_at: Utc::now(),
-                            })
-                            .await;
-
-                        state.send_event(FileEvent::ConflictDetected {
-                            original,
-                            conflict: path_str,
-                        });
-                    }
-                } else {
-                    // Regular KDBX file
-                    if let Ok(metadata) = tokio::fs::metadata(&path).await {
-                        let info = KdbxFileInfo {
-                            path: path_str.clone(),
-                            name: path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_default(),
-                            size: metadata.len(),
-                            modified: metadata
-                                .modified()
-                                .ok()
-                                .map(chrono::DateTime::from)
-                                .unwrap_or_else(Utc::now),
-                        };
-
-                        state.add_kdbx_file(info).await;
-                        state.send_event(FileEvent::FileChanged { path: path_str });
-                    }
+                if let Err(error) = index_file(state, &path).await {
+                    tracing::warn!("Failed to index {:?}: {}", path, error);
                 }
             }
             EventKind::Remove(_) => {
-                if is_conflict_file(&path_str, &state.config.syncthing.conflict_pattern) {
-                    state.remove_conflict(&path_str).await;
+                if is_conflict_file(&path_string, &state.config.syncthing.conflict_pattern) {
+                    state.remove_conflict(&path_string).await;
                 } else {
-                    state.remove_kdbx_file(&path_str).await;
+                    state.remove_kdbx_file(&path_string).await;
                 }
-                state.send_event(FileEvent::FileDeleted { path: path_str });
+                state.send_event(FileEvent::FileDeleted { path: path_string });
             }
             _ => {}
         }
     }
 }
 
-/// Scan a directory for existing KDBX files
+pub(crate) async fn index_file(
+    state: &Arc<AppState>,
+    path: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !is_kdbx_path(path) {
+        return Ok(());
+    }
+
+    let metadata = tokio::fs::symlink_metadata(path).await?;
+    if !metadata.file_type().is_file() {
+        return Ok(());
+    }
+
+    let path_string = path.to_string_lossy().to_string();
+    if is_conflict_file(&path_string, &state.config.syncthing.conflict_pattern) {
+        if let Some(original) = find_original_file(&path_string) {
+            state
+                .add_conflict(ConflictInfo {
+                    original_path: original.clone(),
+                    conflict_path: path_string.clone(),
+                    detected_at: Utc::now(),
+                })
+                .await;
+            state.send_event(FileEvent::ConflictDetected {
+                original,
+                conflict: path_string,
+            });
+        }
+        return Ok(());
+    }
+
+    let info = KdbxFileInfo {
+        id: URL_SAFE_NO_PAD.encode(path_string.as_bytes()),
+        path: path_string.clone(),
+        name: path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        size: metadata.len(),
+        modified: metadata
+            .modified()
+            .ok()
+            .map(chrono::DateTime::from)
+            .unwrap_or_else(Utc::now),
+    };
+    state.add_kdbx_file(info).await;
+    state.send_event(FileEvent::FileChanged { path: path_string });
+    Ok(())
+}
+
 async fn scan_directory(
     state: &Arc<AppState>,
-    dir: &Path,
+    directory: &Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut entries = tokio::fs::read_dir(dir).await?;
+    let mut entries = tokio::fs::read_dir(directory).await?;
 
     while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-
-        if path.is_dir() {
-            Box::pin(scan_directory(state, &path)).await?;
-        } else if path.extension().map(|e| e == "kdbx").unwrap_or(false) {
-            let path_str = path.to_string_lossy().to_string();
-
-            if is_conflict_file(&path_str, &state.config.syncthing.conflict_pattern) {
-                if let Some(original) = find_original_file(&path_str) {
-                    state
-                        .add_conflict(ConflictInfo {
-                            original_path: original,
-                            conflict_path: path_str,
-                            detected_at: Utc::now(),
-                        })
-                        .await;
-                }
-            } else if let Ok(metadata) = entry.metadata().await {
-                let info = KdbxFileInfo {
-                    path: path_str,
-                    name: path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    size: metadata.len(),
-                    modified: metadata
-                        .modified()
-                        .ok()
-                        .map(chrono::DateTime::from)
-                        .unwrap_or_else(Utc::now),
-                };
-                state.add_kdbx_file(info).await;
-            }
+        if entry.file_type().await?.is_file() {
+            index_file(state, &entry.path()).await?;
         }
     }
 
     Ok(())
+}
+
+fn is_kdbx_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("kdbx"))
 }
 
 /// Check if a file path matches the conflict pattern

@@ -22,12 +22,14 @@ pub struct ServerConfig {
     pub port: u16,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    #[serde(default)]
+    pub cors_origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     #[serde(default)]
-    pub watch_directories: Vec<PathBuf>,
+    pub database_directory: Option<PathBuf>,
     #[serde(default = "default_temp_dir")]
     pub temp_directory: PathBuf,
 }
@@ -69,6 +71,7 @@ impl Default for ServerConfig {
             port: default_port(),
             tls_cert: None,
             tls_key: None,
+            cors_origin: None,
         }
     }
 }
@@ -76,7 +79,7 @@ impl Default for ServerConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            watch_directories: Vec::new(),
+            database_directory: None,
             temp_directory: default_temp_dir(),
         }
     }

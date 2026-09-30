@@ -28,6 +28,8 @@ pub struct AppState {
 /// Information about a KDBX file
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct KdbxFileInfo {
+    pub id: String,
+    #[serde(skip)]
     pub path: String,
     pub name: String,
     pub size: u64,

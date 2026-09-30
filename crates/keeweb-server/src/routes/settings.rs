@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 #[derive(Serialize)]
 pub struct SettingsResponse {
-    pub watch_directories: Vec<String>,
+    pub database_directory: Option<String>,
     pub syncthing_enabled: bool,
     pub conflict_pattern: String,
 }
@@ -15,13 +15,12 @@ pub struct SettingsResponse {
 /// Get current settings
 pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let settings = SettingsResponse {
-        watch_directories: state
+        database_directory: state
             .config
             .storage
-            .watch_directories
-            .iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect(),
+            .database_directory
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string()),
         syncthing_enabled: state.config.syncthing.enabled,
         conflict_pattern: state.config.syncthing.conflict_pattern.clone(),
     };

@@ -13,6 +13,7 @@ mod state;
 
 use axum::{
     Router,
+    http::HeaderValue,
     routing::{get, post},
 };
 use std::net::SocketAddr;
@@ -38,35 +39,40 @@ async fn main() -> anyhow::Result<()> {
     let config = config::Config::load()?;
     tracing::info!("Loaded configuration");
 
-    // Create application state
+    // Create application state and prepare its single top-level database path.
+    if let Some(directory) = &config.storage.database_directory {
+        tokio::fs::create_dir_all(directory).await?;
+    }
     let state = Arc::new(AppState::new(config.clone()));
 
-    // Start file watcher
-    if !config.storage.watch_directories.is_empty() {
+    if config.storage.database_directory.is_some() {
         services::watcher::start_watcher(state.clone()).await?;
-        tracing::info!(
-            "Started watching {} directories",
-            config.storage.watch_directories.len()
-        );
+        tracing::info!("Started database directory watcher");
     }
 
     // Build router
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/health", get(routes::health))
         .route("/api/files", get(routes::files::list_files))
-        .route("/api/files/:path", get(routes::files::download_file))
+        .route(
+            "/api/files/:path",
+            get(routes::files::download_file).put(routes::files::upload_file),
+        )
         .route("/api/conflicts", get(routes::files::list_conflicts))
         .route("/api/events", get(routes::sse::events))
         .route("/api/settings", get(routes::settings::get_settings))
         .route("/api/argon2", post(routes::argon2::compute_argon2))
         .with_state(state)
-        .layer(
+        .layer(TraceLayer::new_for_http());
+    if let Some(origin) = &config.server.cors_origin {
+        let origin = HeaderValue::from_str(origin)?;
+        app = app.layer(
             CorsLayer::new()
-                .allow_origin(Any)
+                .allow_origin(origin)
                 .allow_methods(Any)
                 .allow_headers(Any),
-        )
-        .layer(TraceLayer::new_for_http());
+        );
+    }
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)

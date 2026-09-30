@@ -266,8 +266,9 @@ html, body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     height: 100%;
+    overflow-y: auto;
     padding: var(--spacing-xl);
 }
 
@@ -307,6 +308,59 @@ html, body {
 .drop-zone p {
     color: var(--color-text-secondary);
     margin-bottom: var(--spacing-md);
+}
+
+.file-error {
+    width: 100%;
+    max-width: 500px;
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-sm);
+    border: 1px solid var(--color-error);
+    border-radius: var(--radius-md);
+    color: var(--color-error);
+}
+
+.stored-files {
+    width: 100%;
+    max-width: 500px;
+    margin-top: var(--spacing-xl);
+}
+
+.stored-files h3 {
+    margin-bottom: var(--spacing-sm);
+}
+
+.stored-files > p {
+    color: var(--color-text-muted);
+}
+
+.stored-file-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.stored-file {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text);
+    cursor: pointer;
+    text-align: left;
+}
+
+.stored-file:hover {
+    border-color: var(--color-primary);
+    background: var(--color-surface-hover);
+}
+
+.stored-file-size {
+    color: var(--color-text-muted);
+    white-space: nowrap;
 }
 
 .file-picker-options {

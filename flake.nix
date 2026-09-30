@@ -25,7 +25,7 @@
         ./nix/rust.nix
       ];
 
-      systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
+      systems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin"];
 
       perSystem = {
         config,
@@ -93,6 +93,7 @@
               description = "Optional backend server for keeweb-rs";
               homepage = "https://github.com/johnrichardrinehart/keeweb-rs";
               license = licenses.mit;
+              mainProgram = "keeweb-server";
             };
           };
 
@@ -156,6 +157,7 @@
                   pkgs.trunk
                   wasmBindgenCli
                   pkgs.binaryen
+                  pkgs.removeReferencesTo
                   pkgs.wasm-pack
                 ];
               inherit buildInputs;
@@ -215,6 +217,8 @@
                 cp -r dist/* $out/
                 # Add .nojekyll to prevent GitHub Pages from ignoring _files
                 touch $out/.nojekyll
+                find "$out" -type f -name '*.wasm' \
+                  -exec remove-references-to -t ${rustToolchain} '{}' +
               '';
 
               meta = with lib; {
@@ -223,6 +227,16 @@
                 license = licenses.mit;
               };
             };
+
+          keeweb-frontend-root = self'.packages.keeweb-frontend.overrideAttrs (old: {
+            pname = "keeweb-frontend-root";
+            KEEWEB_SERVER_STORAGE = "1";
+            buildPhase =
+              builtins.replaceStrings
+              ["--public-url /keeweb-rs/"]
+              ["--public-url /"]
+              old.buildPhase;
+          });
         };
 
         # Development shell
