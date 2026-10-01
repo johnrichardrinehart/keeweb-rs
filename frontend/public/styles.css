@@ -382,6 +382,12 @@ textarea {
     background: var(--color-success);
 }
 
+/* Desktop: Save follows the vault name. Narrow screens: Save sits right after the
+   brand mark, where the thumb reaches it first. */
+.header-left .save-controls {
+    order: 1;
+}
+
 .save-controls {
     display: flex;
     align-items: center;
@@ -2655,6 +2661,10 @@ textarea {
     .header-right,
     .save-controls {
         gap: var(--space-1);
+    }
+
+    .header-left .save-controls {
+        order: 0;
     }
 
     .header-actions {

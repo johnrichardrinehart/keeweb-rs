@@ -126,6 +126,9 @@ fn Header() -> impl IntoView {
                         <path fill="currentColor" d="M12 2 4.5 5v5.8c0 4.7 3.2 9.1 7.5 10.2 4.3-1.1 7.5-5.5 7.5-10.2V5L12 2Zm0 4.1a3 3 0 0 1 1 5.8v3.6h-2v-3.6a3 3 0 0 1 1-5.8Z"/>
                     </svg>
                 </div>
+                <Show when=in_database>
+                    <SaveControls />
+                </Show>
                 <div class="brand-copy">
                     <h1 class="app-title">"KeeWeb RS"</h1>
                     <span class="app-subtitle">"A private KeePass vault"</span>
@@ -137,9 +140,6 @@ fn Header() -> impl IntoView {
                 </Show>
             </div>
             <div class="header-right">
-                <Show when=in_database>
-                    <SaveControls />
-                </Show>
                 <span
                     class="helper-status"
                     class:helper-status-connected=move || state.helper_status.get() == HelperStatus::Connected
