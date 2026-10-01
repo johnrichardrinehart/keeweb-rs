@@ -6,12 +6,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::state::AppState;
 
-/// Inactivity timeout before showing warning (milliseconds)
-const WARNING_TIMEOUT_MS: u32 = 20_000; // 20 seconds
-
-/// Countdown duration after warning (milliseconds)
-#[allow(dead_code)]
-const COUNTDOWN_DURATION_MS: u32 = 10_000; // 10 seconds
+/// Seconds the warning counts down before the lock.
+const COUNTDOWN_SECONDS: i32 = 10;
 
 /// Auto-lock component - tracks inactivity and shows countdown modal
 #[component]
@@ -21,7 +17,7 @@ pub fn AutoLock() -> impl IntoView {
 
     // Countdown state
     let show_warning = create_rw_signal(false);
-    let countdown_seconds = create_rw_signal(10i32);
+    let countdown_seconds = create_rw_signal(COUNTDOWN_SECONDS);
 
     // Timer handles stored in signals for cleanup
     let inactivity_timer: StoredValue<Option<i32>> = store_value(None);
@@ -33,6 +29,11 @@ pub fn AutoLock() -> impl IntoView {
         if !any_unlocked.get_untracked() {
             return;
         }
+        let Some(idle_seconds) = state.idle_lock.get_untracked() else {
+            return;
+        };
+        // The warning counts down the last COUNTDOWN_SECONDS of the idle time.
+        let warning_delay_ms = idle_seconds.saturating_sub(COUNTDOWN_SECONDS as u32) * 1000;
 
         // Clear existing timers
         if let Some(timer_id) = inactivity_timer.get_value() {
@@ -44,7 +45,7 @@ pub fn AutoLock() -> impl IntoView {
 
         // Hide warning if shown
         show_warning.set(false);
-        countdown_seconds.set(10);
+        countdown_seconds.set(COUNTDOWN_SECONDS);
 
         // Set new inactivity timer
         let timer_id = set_timeout(
@@ -52,7 +53,7 @@ pub fn AutoLock() -> impl IntoView {
                 // Show warning modal and start countdown
                 if any_unlocked.get_untracked() {
                     show_warning.set(true);
-                    countdown_seconds.set(10);
+                    countdown_seconds.set(COUNTDOWN_SECONDS);
 
                     // Start countdown interval
                     let interval_id = set_interval(
@@ -74,7 +75,7 @@ pub fn AutoLock() -> impl IntoView {
                     countdown_timer.set_value(Some(interval_id));
                 }
             },
-            WARNING_TIMEOUT_MS,
+            warning_delay_ms,
         );
         inactivity_timer.set_value(Some(timer_id));
     };
@@ -86,8 +87,10 @@ pub fn AutoLock() -> impl IntoView {
 
     // Set up activity listeners when component mounts
     create_effect(move |_| {
-        // Only set up listeners while some vault is unlocked
-        if !any_unlocked.get() {
+        // Re-arm when the setting changes, so a new limit applies at once.
+        state.idle_lock.track();
+        // Only set up listeners while some vault is unlocked and auto-lock is on
+        if !any_unlocked.get() || state.idle_lock.get_untracked().is_none() {
             // Clear timers when every vault is locked
             if let Some(timer_id) = inactivity_timer.get_value() {
                 clear_timeout(timer_id);

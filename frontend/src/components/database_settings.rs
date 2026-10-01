@@ -1,4 +1,5 @@
-//! Database name, description, recycle bin, history limits and fingerprint unlock.
+//! Database name, description, recycle bin, history limits, fingerprint unlock, and the
+//! inactivity lock of this browser.
 
 use keeweb_wasm::document::{Change, MetaEdit};
 use leptos::*;
@@ -6,7 +7,7 @@ use leptos::*;
 use crate::components::dialog::Dialog;
 use crate::components::unlock_dialog::FingerprintIcon;
 use crate::quick_unlock::{self, Support};
-use crate::state::AppState;
+use crate::state::{AppState, save_idle_lock};
 
 const MIB: i64 = 1024 * 1024;
 
@@ -164,6 +165,7 @@ fn SettingsForm(initial: MetaEdit) -> impl IntoView {
                         <div class="error-message" role="alert">{move || error.get().unwrap_or_default()}</div>
                     </Show>
                     <FingerprintSettings />
+                    <IdleLockSettings />
                 </div>
                 <div class="dialog-footer">
                     <button type="button" class="btn btn-secondary" on:click=move |_| close()>"Cancel"</button>
@@ -268,6 +270,59 @@ fn FingerprintSettings() -> impl IntoView {
             <Show when=move || message.get().is_some()>
                 <p class="section-hint" role="status">{move || message.get().unwrap_or_default()}</p>
             </Show>
+        </section>
+    }
+}
+
+/// Choices for the inactivity lock, in seconds; `None` turns it off.
+const IDLE_LOCK_CHOICES: [(Option<u32>, &str); 9] = [
+    (Some(30), "30 seconds"),
+    (Some(60), "1 minute"),
+    (Some(2 * 60), "2 minutes"),
+    (Some(5 * 60), "5 minutes"),
+    (Some(10 * 60), "10 minutes"),
+    (Some(15 * 60), "15 minutes"),
+    (Some(30 * 60), "30 minutes"),
+    (Some(60 * 60), "1 hour"),
+    (None, "Never"),
+];
+
+/// Inactivity time before every vault locks. Stored per browser and applied at once.
+#[component]
+fn IdleLockSettings() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let on_change = move |event| {
+        let value = event_target_value(&event);
+        let seconds = value.parse::<u32>().ok();
+        state.idle_lock.set(seconds);
+        save_idle_lock(seconds);
+    };
+    let encode =
+        |seconds: Option<u32>| seconds.map_or_else(|| "never".to_string(), |s| s.to_string());
+
+    view! {
+        <section class="settings-section" aria-labelledby="idle-lock-settings-title">
+            <h3 id="idle-lock-settings-title" class="settings-section-title">"Lock when idle"</h3>
+            <p class="section-hint">"Lock every vault after this much inactivity. Applies to this browser."</p>
+            <select
+                class="form-input"
+                aria-labelledby="idle-lock-settings-title"
+                on:change=on_change
+            >
+                // `selected` on the option, because a value set on the <select> before its
+                // options exist falls back to the first option.
+                {IDLE_LOCK_CHOICES
+                    .iter()
+                    .map(|&(seconds, label)| view! {
+                        <option
+                            value=encode(seconds)
+                            prop:selected=move || state.idle_lock.get() == seconds
+                        >
+                            {label}
+                        </option>
+                    })
+                    .collect_view()}
+            </select>
         </section>
     }
 }

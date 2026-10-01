@@ -168,6 +168,27 @@ fn remember_key_file(vault: &str, name: Option<&str>) {
     };
 }
 
+const IDLE_LOCK_KEY: &str = "keeweb-rs-idle-lock-seconds";
+
+/// Seconds of inactivity before every vault locks, on this browser.
+pub const DEFAULT_IDLE_LOCK_SECONDS: u32 = 30;
+
+/// Inactivity time before auto-lock on this browser; `None` turns auto-lock off.
+pub fn load_idle_lock() -> Option<u32> {
+    match local_storage().and_then(|s| s.get_item(IDLE_LOCK_KEY).ok().flatten()) {
+        Some(value) if value == "never" => None,
+        Some(value) => Some(value.parse().unwrap_or(DEFAULT_IDLE_LOCK_SECONDS)),
+        None => Some(DEFAULT_IDLE_LOCK_SECONDS),
+    }
+}
+
+pub fn save_idle_lock(seconds: Option<u32>) {
+    if let Some(storage) = local_storage() {
+        let value = seconds.map_or_else(|| "never".to_string(), |s| s.to_string());
+        let _ = storage.set_item(IDLE_LOCK_KEY, &value);
+    }
+}
+
 /// Where a vault came from and where saves go.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatabaseSource {
@@ -345,6 +366,8 @@ pub struct AppState {
     pub backend_url: RwSignal<Option<String>>,
     /// Theme preference
     pub theme: RwSignal<Theme>,
+    /// Inactivity seconds before auto-lock on this browser; `None` turns it off.
+    pub idle_lock: RwSignal<Option<u32>>,
 }
 
 impl AppState {
@@ -378,6 +401,7 @@ impl AppState {
             helper_status: create_rw_signal(HelperStatus::Checking),
             backend_url: create_rw_signal(None),
             theme: create_rw_signal(initial_theme),
+            idle_lock: create_rw_signal(load_idle_lock()),
         }
     }
 
