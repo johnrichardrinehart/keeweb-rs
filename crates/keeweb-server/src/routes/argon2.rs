@@ -144,10 +144,6 @@ pub async fn compute_argon2(
 
     let elapsed = start.elapsed();
     tracing::info!("Argon2 computation completed in {:?}", elapsed);
-    tracing::debug!(
-        "Hash first 16 bytes: {:02x?}",
-        &output[..output.len().min(16)]
-    );
 
     Ok(Json(Argon2Response {
         hash: BASE64.encode(&output),
