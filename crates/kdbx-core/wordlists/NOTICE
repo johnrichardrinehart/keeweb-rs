@@ -1,0 +1,4 @@
+eff_large_wordlist.txt is the EFF Long Wordlist by the Electronic Frontier Foundation
+(https://www.eff.org/dice, https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt),
+licensed under CC BY 3.0 US (https://creativecommons.org/licenses/by/3.0/us/).
+Changes: the dice-roll numbers were removed, leaving one word per line.

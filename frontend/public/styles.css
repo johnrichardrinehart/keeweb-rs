@@ -1144,7 +1144,30 @@ input {
 
 /* Password Generator */
 .password-generator-dialog {
-    max-width: 500px;
+    display: flex;
+    flex-direction: column;
+    max-width: 520px;
+    max-height: calc(100dvh - 2rem);
+}
+
+.password-generator-dialog .dialog-body {
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.generator-segments {
+    display: grid;
+    grid-auto-columns: 1fr;
+    grid-auto-flow: column;
+    gap: var(--spacing-xs);
+}
+
+.generator-modes {
+    margin-bottom: var(--spacing-md);
+}
+
+.generator-modes .generator-toggle {
+    font-weight: 600;
 }
 
 .generated-password-display {
@@ -1153,20 +1176,36 @@ input {
     gap: var(--spacing-md);
     padding: var(--spacing-md);
     background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     margin-bottom: var(--spacing-md);
 }
 
 .generated-password {
     flex: 1;
+    min-width: 0;
     font-family: 'Fira Code', 'Consolas', monospace;
     font-size: 1rem;
-    word-break: break-all;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: all;
+}
+
+.generated-password.form-error {
+    font-family: inherit;
+    font-size: 0.875rem;
+    user-select: text;
 }
 
 .password-actions {
     display: flex;
+    flex-shrink: 0;
     gap: var(--spacing-xs);
+}
+
+.password-actions .btn-icon:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .password-strength {
@@ -1186,11 +1225,11 @@ input {
     transition: width var(--transition-normal), background-color var(--transition-normal);
 }
 
-.strength-weak {
+.strength-poor {
     background-color: var(--color-error);
 }
 
-.strength-fair {
+.strength-weak {
     background-color: var(--color-warning);
 }
 
@@ -1198,15 +1237,15 @@ input {
     background-color: #84cc16;
 }
 
-.strength-strong {
+.strength-excellent {
     background-color: var(--color-success);
 }
 
-.strength-excellent {
-    background-color: #06b6d4;
-}
-
 .strength-text {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--spacing-xs) var(--spacing-md);
     font-size: 0.75rem;
     color: var(--color-text-secondary);
 }
@@ -1217,27 +1256,93 @@ input {
     gap: var(--spacing-md);
 }
 
-.option-row {
+.generator-options .form-group {
+    margin-bottom: 0;
+}
+
+.generator-field {
+    display: grid;
+    gap: var(--spacing-xs);
+}
+
+.generator-field > label,
+.generator-label {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+}
+
+.generator-count {
     display: flex;
     align-items: center;
     gap: var(--spacing-md);
 }
 
-.option-row label {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    cursor: pointer;
-}
-
-.option-row input[type="range"] {
+.generator-count input[type="range"] {
     flex: 1;
+    min-width: 0;
+    accent-color: var(--color-primary);
 }
 
-.option-row input[type="checkbox"] {
+.generator-count .form-input {
+    flex-shrink: 0;
+    width: 5rem;
+}
+
+.generator-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.generator-toggle {
+    min-height: 36px;
+    padding: 0.35rem 0.75rem;
+    color: var(--color-text-secondary);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.generator-toggle:hover {
+    color: var(--color-text);
+    background: var(--color-surface-hover);
+}
+
+.generator-toggle.active {
+    color: var(--color-primary);
+    background: var(--color-glow);
+    border-color: var(--color-primary);
+}
+
+.generator-checks {
+    display: grid;
+    justify-items: start;
+    gap: var(--spacing-sm);
+}
+
+.generator-checks input[type="checkbox"] {
     width: 16px;
     height: 16px;
     accent-color: var(--color-primary);
+}
+
+@media (max-width: 600px) {
+    .password-generator-dialog .dialog-body {
+        padding: 1.25rem;
+    }
+
+    .generator-toggle {
+        min-height: 40px;
+    }
+
+    .password-generator-dialog .dialog-footer .btn {
+        flex: 1 1 auto;
+        white-space: nowrap;
+    }
 }
 
 /* Scrollbar */

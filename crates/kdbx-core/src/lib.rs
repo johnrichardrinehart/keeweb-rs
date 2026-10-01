@@ -7,6 +7,7 @@ mod database;
 pub mod document;
 mod entry;
 mod error;
+pub mod generator;
 mod group;
 pub mod kdbx4_decrypt;
 pub mod totp;

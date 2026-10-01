@@ -98,9 +98,5 @@ log = "0.4"
 console_log = { version = "1", features = ["color"] }
 console_error_panic_hook = "0.1"
 
-# Random for password generation
-getrandom = { version = "0.2", features = ["js"] }
-rand = { version = "0.8", features = ["small_rng"] }
-
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

@@ -144,7 +144,7 @@ pub fn init_theme(theme: Theme) {
 
 const KEY_FILE_HINT_PREFIX: &str = "keeweb-rs-key-file:";
 
-fn local_storage() -> Option<web_sys::Storage> {
+pub(crate) fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }
 

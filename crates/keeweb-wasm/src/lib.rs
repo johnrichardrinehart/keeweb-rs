@@ -4,8 +4,8 @@
 //! keys needed to save it. JavaScript callers exchange views, changes and outcomes as
 //! JSON; Rust callers use the typed methods and the re-exported [`document`] types.
 
-pub use kdbx_core::document;
 pub use kdbx_core::{KdfParams, KdfType};
+pub use kdbx_core::{document, generator};
 
 use kdbx_core::document::{Change, ChangeOutcome, KdbxDocument};
 use kdbx_core::{TotpAlgorithm, TotpConfig};
