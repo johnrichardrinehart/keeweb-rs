@@ -115,8 +115,8 @@ pub fn UnlockDialog() -> impl IntoView {
             >
                 <div class="dialog-header">
                     <div>
-                        <span class="dialog-eyebrow">"Encrypted database"</span>
-                        <h2 id="unlock-title">"Unlock your vault"</h2>
+                        <h2 id="unlock-title">"Unlock vault"</h2>
+                        <p class="database-file-name">{move || state.database_name.get()}</p>
                     </div>
                     <button class="dialog-close" on:click=on_cancel aria-label="Close unlock dialog">
                         <svg viewBox="0 0 24 24" width="20" height="20">
@@ -126,10 +126,6 @@ pub fn UnlockDialog() -> impl IntoView {
                 </div>
 
                 <div class="dialog-body">
-                    <p class="database-file-name">
-                        {move || state.database_name.get()}
-                    </p>
-
                     <form on:submit=on_submit>
                         <div class="form-group">
                             <label for="password">"Master Password"</label>
@@ -175,37 +171,9 @@ pub fn UnlockDialog() -> impl IntoView {
                         </Show>
                     </form>
 
-                    <div
-                        class="unlock-helper"
-                        class:unlock-helper-connected=move || state.helper_status.get() == HelperStatus::Connected
-                        aria-live="polite"
-                    >
-                        <div class="unlock-helper-summary">
-                            <span class="status-dot"></span>
-                            <div>
-                                <strong>
-                                    {move || if state.helper_status.get() == HelperStatus::Connected {
-                                        "Native unlock ready"
-                                    } else {
-                                        "Browser unlock mode"
-                                    }}
-                                </strong>
-                                <span>
-                                    {move || if state.helper_status.get() == HelperStatus::Connected {
-                                        "Argon2 runs in the localhost helper."
-                                    } else {
-                                        "Argon2 runs in WebAssembly and can take longer."
-                                    }}
-                                </span>
-                            </div>
-                        </div>
-                        <Show when=move || state.helper_status.get() == HelperStatus::Unavailable>
-                            <div class="helper-command">
-                                <span>"For native-speed unlock, run:"</span>
-                                <code>"nix run github:johnrichardrinehart/keeweb-rs#helper"</code>
-                            </div>
-                        </Show>
-                    </div>
+                    <Show when=move || state.helper_status.get() != HelperStatus::Connected>
+                        <p class="unlock-note">"Unlocking in the browser can take a while."</p>
+                    </Show>
                 </div>
 
                 <div class="dialog-footer">

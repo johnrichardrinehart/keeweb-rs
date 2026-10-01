@@ -75,180 +75,88 @@ pub fn FilePicker() -> impl IntoView {
     };
 
     view! {
-        <section class="file-picker" aria-labelledby="welcome-title">
-            <div class="welcome-shell">
-                <div class="welcome-copy">
-                    <span class="eyebrow">"Local-first password manager"</span>
-                    <h2 id="welcome-title">"Your vault, opened where it belongs."</h2>
-                    <p class="welcome-lede">
-                        "Open a vault from your private server or add another one. Database files stay encrypted until this browser unlocks them."
-                    </p>
-
-                    <div class="trust-list" aria-label="Privacy guarantees">
-                        <div class="trust-item">
-                            <span class="trust-icon" aria-hidden="true">"01"</span>
-                            <div>
-                                <strong>"One private vault library"</strong>
-                                <span>"Choose any stored KDBX database from this page."</span>
-                            </div>
-                        </div>
-                        <div class="trust-item">
-                            <span class="trust-icon" aria-hidden="true">"02"</span>
-                            <div>
-                                <strong>"Decryption stays local"</strong>
-                                <span>"The server sends encrypted bytes. Your password stays here."</span>
-                            </div>
-                        </div>
-                        <div class="trust-item">
-                            <span class="trust-icon" aria-hidden="true">"03"</span>
-                            <div>
-                                <strong>"Native unlock, on your machine"</strong>
-                                <span>"The optional helper accelerates Argon2 on localhost."</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div
-                        class="helper-card"
-                        class:helper-card-connected=move || state.helper_status.get() == HelperStatus::Connected
-                        aria-live="polite"
-                    >
-                        <div class="helper-card-heading">
-                            <span class="status-dot"></span>
-                            <strong>
-                                {move || match state.helper_status.get() {
-                                    HelperStatus::Checking => "Looking for the local helper",
-                                    HelperStatus::Connected => "Native unlock is ready",
-                                    HelperStatus::Unavailable => "Native helper is not running",
-                                }}
-                            </strong>
-                        </div>
-                        {move || match state.helper_status.get() {
-                            HelperStatus::Checking => view! {
-                                <p>"Checking 127.0.0.1:8081…"</p>
-                            }.into_view(),
-                            HelperStatus::Connected => view! {
-                                <p>"KeeWeb will use native Argon2 for a faster unlock."</p>
-                            }.into_view(),
-                            HelperStatus::Unavailable => view! {
-                                <div>
-                                    <p>"Start it in another terminal. Browser unlock remains available."</p>
-                                    <code class="run-command">"nix run github:johnrichardrinehart/keeweb-rs#helper"</code>
-                                </div>
-                            }.into_view(),
-                        }}
-                    </div>
-                </div>
-
-                <div class="vault-workspace">
-                    <Show when=server_storage_enabled>
-                        <section class="vault-library" aria-labelledby="vault-library-title">
-                            <div class="vault-library-header">
-                                <div>
-                                    <span class="drop-kicker">"Private server"</span>
-                                    <h3 id="vault-library-title">"Your vaults"</h3>
-                                </div>
-                                <span class="vault-count">
-                                    {move || stored_files.get().len()}
-                                </span>
-                            </div>
+        <section class="file-picker" aria-label="Open a vault">
+            <div class="picker-column">
+                <Show when=server_storage_enabled>
+                    <section class="vault-library" aria-labelledby="vault-library-title">
+                        <h2 id="vault-library-title" class="vault-library-title">"Vaults"</h2>
+                        <Show
+                            when=move || storage_loaded.get()
+                            fallback=|| view! { <p class="vault-status">"Loading…"</p> }
+                        >
                             <Show
-                                when=move || storage_loaded.get()
-                                fallback=|| view! {
-                                    <div class="vault-loading">"Loading encrypted vaults…"</div>
-                                }
+                                when=move || !stored_files.get().is_empty()
+                                fallback=|| view! { <p class="vault-status">"No stored vaults."</p> }
                             >
-                                <Show
-                                    when=move || !stored_files.get().is_empty()
-                                    fallback=|| view! {
-                                        <div class="vault-empty">
-                                            <strong>"No stored vaults yet"</strong>
-                                            <span>"Add your first database below."</span>
-                                        </div>
-                                    }
-                                >
-                                    <div class="vault-list">
-                                        {move || stored_files.get().into_iter().map(|file| {
-                                            let id = file.id.clone();
-                                            let name = file.name.clone();
-                                            let display_name = file.name.clone();
-                                            view! {
-                                                <button
-                                                    class="vault-row"
-                                                    type="button"
-                                                    on:click=move |_| {
-                                                        let id = id.clone();
-                                                        let name = name.clone();
-                                                        spawn_local(open_stored_file(id, name, state));
-                                                    }
-                                                >
-                                                    <span class="vault-row-icon" aria-hidden="true">
-                                                        <svg viewBox="0 0 24 24" width="18" height="18">
-                                                            <path fill="currentColor" d="M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Zm-7-2a2 2 0 0 1 4 0v2h-4V6Zm3 10.73V18h-2v-1.27a2 2 0 1 1 2 0Z"/>
-                                                        </svg>
-                                                    </span>
-                                                    <span class="vault-row-copy">
-                                                        <strong>{display_name}</strong>
-                                                        <span>{format_size(file.size)}</span>
-                                                    </span>
-                                                    <svg class="vault-row-arrow" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                                                        <path fill="currentColor" d="m9.3 17.3 4.6-4.6a1 1 0 0 0 0-1.4L9.3 6.7l1.4-1.4 4.6 4.6a3 3 0 0 1 0 4.2l-4.6 4.6-1.4-1.4Z"/>
+                                <div class="vault-list">
+                                    {move || stored_files.get().into_iter().map(|file| {
+                                        let id = file.id.clone();
+                                        let name = file.name.clone();
+                                        let display_name = file.name.clone();
+                                        view! {
+                                            <button
+                                                class="vault-row"
+                                                type="button"
+                                                on:click=move |_| {
+                                                    let id = id.clone();
+                                                    let name = name.clone();
+                                                    spawn_local(open_stored_file(id, name, state));
+                                                }
+                                            >
+                                                <span class="vault-row-icon" aria-hidden="true">
+                                                    <svg viewBox="0 0 24 24" width="18" height="18">
+                                                        <path fill="currentColor" d="M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Zm-7-2a2 2 0 0 1 4 0v2h-4V6Zm3 10.73V18h-2v-1.27a2 2 0 1 1 2 0Z"/>
                                                     </svg>
-                                                </button>
-                                            }
-                                        }).collect_view()}
-                                    </div>
-                                </Show>
+                                                </span>
+                                                <span class="vault-row-copy">
+                                                    <strong>{display_name}</strong>
+                                                    <span>{format_size(file.size)}</span>
+                                                </span>
+                                                <svg class="vault-row-arrow" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                                                    <path fill="currentColor" d="m9.3 17.3 4.6-4.6a1 1 0 0 0 0-1.4L9.3 6.7l1.4-1.4 4.6 4.6a3 3 0 0 1 0 4.2l-4.6 4.6-1.4-1.4Z"/>
+                                                </svg>
+                                            </button>
+                                        }
+                                    }).collect_view()}
+                                </div>
                             </Show>
-                        </section>
-                    </Show>
+                        </Show>
+                    </section>
+                </Show>
 
-                    <div
-                        class="drop-zone"
-                        class:drop-zone-compact=server_storage_enabled()
-                        class:dragging=move || is_dragging.get()
-                        on:dragover=on_drag_over
-                        on:dragleave=on_drag_leave
-                        on:drop=on_drop
-                    >
-                        <div class="drop-zone-content">
-                            <div class="drop-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" width="56" height="56">
-                                    <path fill="currentColor" d="M12 2 4.5 5v5.8c0 4.7 3.2 9.1 7.5 10.2 4.3-1.1 7.5-5.5 7.5-10.2V5L12 2Zm0 5a2.5 2.5 0 0 1 1 4.8V16h-2v-4.2A2.5 2.5 0 0 1 12 7Z"/>
-                                </svg>
-                            </div>
-                            <span class="drop-kicker">
-                                {if server_storage_enabled() { "Add a vault" } else { "KeePass database" }}
-                            </span>
-                            <h3>"Open a .kdbx file"</h3>
-                            <p>
-                                {if server_storage_enabled() {
-                                    "Upload an encrypted database or drag it here."
-                                } else {
-                                    "Choose a file or drag it into this window."
-                                }}
-                            </p>
-                            <button class="btn btn-primary btn-large" type="button" on:click=open_file_dialog>
-                                {if server_storage_enabled() { "Upload database" } else { "Choose database" }}
-                            </button>
-                            <input
-                                type="file"
-                                accept=".kdbx"
-                                class="visually-hidden"
-                                node_ref=file_input_ref
-                                on:change=on_file_change
-                            />
-                            <span class="drop-footnote">"KeePass 2 · KDBX 4"</span>
-                        </div>
-                    </div>
+                <div
+                    class="drop-zone"
+                    class:dragging=move || is_dragging.get()
+                    on:dragover=on_drag_over
+                    on:dragleave=on_drag_leave
+                    on:drop=on_drop
+                >
+                    <p>"Drop a .kdbx file here or"</p>
+                    <button class="btn btn-primary" type="button" on:click=open_file_dialog>
+                        {if server_storage_enabled() { "Upload database" } else { "Choose database" }}
+                    </button>
+                    <input
+                        type="file"
+                        accept=".kdbx"
+                        class="visually-hidden"
+                        node_ref=file_input_ref
+                        on:change=on_file_change
+                    />
                 </div>
-            </div>
 
-            <Show when=move || state.error_message.get().is_some()>
-                <p class="file-error" role="alert">
-                    {move || state.error_message.get().unwrap_or_default()}
-                </p>
-            </Show>
+                <Show when=move || state.helper_status.get() == HelperStatus::Unavailable>
+                    <div class="helper-notice">
+                        <span>"For faster unlock, run the local helper:"</span>
+                        <code class="run-command">"nix run github:johnrichardrinehart/keeweb-rs#helper"</code>
+                    </div>
+                </Show>
+
+                <Show when=move || state.error_message.get().is_some()>
+                    <p class="file-error" role="alert">
+                        {move || state.error_message.get().unwrap_or_default()}
+                    </p>
+                </Show>
+            </div>
         </section>
     }
 }
