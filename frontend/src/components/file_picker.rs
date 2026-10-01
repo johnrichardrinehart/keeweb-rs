@@ -125,7 +125,7 @@ pub fn FilePicker() -> impl IntoView {
                     on:dragleave=on_drag_leave
                     on:drop=on_drop
                 >
-                    <p>"Drop a .kdbx file here or"</p>
+                    <p class="drop-hint">"Drop a .kdbx file here or"</p>
                     <button class="btn btn-primary" type="button" on:click=open_file_dialog>
                         {if server::storage_enabled() { "Upload database" } else { "Choose database" }}
                     </button>

@@ -3,6 +3,7 @@
 use leptos::*;
 use uuid::Uuid;
 
+use crate::app::GroupsDrawer;
 use crate::components::icons::KeepassIcon;
 use crate::model::{self, USER_NAME};
 use crate::state::{AppState, EntryEditor};
@@ -51,10 +52,38 @@ pub fn EntryList() -> impl IntoView {
             state.editor.set(Some(EntryEditor::Create { group }));
         }
     };
+    let drawer = expect_context::<GroupsDrawer>();
+    let scope_label = move || {
+        if let Some(tag) = state.selected_tag.get() {
+            return format!("#{tag}");
+        }
+        state
+            .selected_group
+            .get()
+            .and_then(|uuid| {
+                state.groups.with(|groups| {
+                    groups
+                        .iter()
+                        .find(|g| g.uuid == uuid)
+                        .map(|g| g.name.clone())
+                })
+            })
+            .unwrap_or_else(|| "All Entries".to_string())
+    };
 
     view! {
         <div class="entry-list">
             <div class="entry-list-header">
+                <button
+                    class="btn btn-secondary groups-toggle"
+                    on:click=move |_| drawer.0.set(true)
+                    aria-label="Show groups"
+                >
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                        <path fill="currentColor" d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z"/>
+                    </svg>
+                    <span>{scope_label}</span>
+                </button>
                 <div class="search-box">
                     <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18">
                         <path fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>

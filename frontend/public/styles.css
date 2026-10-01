@@ -81,7 +81,7 @@ html,
 body {
     height: 100%;
     font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    font-size: 17px;
+    font-size: 19px;
     line-height: 1.5;
     background: var(--color-bg);
     color: var(--color-text);
@@ -331,9 +331,16 @@ input {
 
 .picker-column {
     display: grid;
-    width: min(680px, 100%);
+    /* minmax(0, …) stops the long helper command from widening the column. */
+    grid-template-columns: minmax(0, 1fr);
+    width: min(820px, 100%);
     margin: 0 auto;
     gap: 1rem;
+}
+
+.groups-toggle,
+.groups-backdrop {
+    display: none;
 }
 
 .helper-notice {
@@ -1912,22 +1919,87 @@ input {
         padding-bottom: 3rem;
     }
 
-    .database-view {
-        overflow-x: auto;
-    }
-
     .sidebar {
         width: 210px;
         flex: 0 0 210px;
     }
 
-    .content-area {
-        min-width: 660px;
-    }
-
     .entry-list {
         width: 280px;
         flex: 0 0 280px;
+    }
+}
+
+/* Narrow screens show one pane at a time: the entry list, an open entry, or
+   the group drawer over the list. */
+@media (max-width: 760px) {
+    .database-view {
+        position: relative;
+    }
+
+    .sidebar {
+        position: absolute;
+        inset: 0 auto 0 0;
+        z-index: 30;
+        width: min(300px, 85vw);
+        transform: translateX(-100%);
+        transition: transform var(--transition-normal);
+    }
+
+    .groups-open .sidebar {
+        transform: none;
+        box-shadow: var(--shadow-lg);
+    }
+
+    .groups-open .groups-backdrop {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+        display: block;
+        background: rgba(4, 6, 12, 0.5);
+    }
+
+    .entry-list {
+        flex: 1 1 auto;
+        width: 100%;
+        border-right: 0;
+    }
+
+    .has-panel .entry-list {
+        display: none;
+    }
+
+    .groups-toggle {
+        display: inline-flex;
+        align-items: center;
+        max-width: 100%;
+        margin-bottom: var(--spacing-sm);
+        gap: 0.5rem;
+    }
+
+    .groups-toggle span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+/* Touch devices cannot drag files or run the localhost helper. */
+@media (pointer: coarse) {
+    .drop-hint,
+    .helper-notice,
+    .helper-pill {
+        display: none;
+    }
+
+    .drop-zone {
+        padding: 0;
+        border: 0;
+    }
+
+    .drop-zone .btn {
+        width: 100%;
+        min-height: 48px;
     }
 }
 
@@ -1991,6 +2063,27 @@ input {
 
     .form-row {
         grid-template-columns: 1fr;
+    }
+
+    .app-header.in-database .brand-copy {
+        display: none;
+    }
+
+    .unlock-dialog .dialog-header,
+    .unlock-dialog .dialog-body {
+        padding: 1.25rem;
+    }
+
+    .unlock-dialog .dialog-header h2 {
+        font-size: 1.4rem;
+    }
+
+    .unlock-dialog .dialog-footer {
+        padding: 1rem 1.25rem 1.25rem;
+    }
+
+    .unlock-dialog .dialog-footer .btn {
+        flex: 1;
     }
 }
 

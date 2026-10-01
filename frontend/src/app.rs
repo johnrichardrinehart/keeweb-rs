@@ -100,7 +100,7 @@ fn Header() -> impl IntoView {
     let in_database = move || state.current_view.get() == AppView::Database;
 
     view! {
-        <header class="app-header">
+        <header class="app-header" class:in-database=in_database>
             <div class="header-left">
                 <div class="brand-mark" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="22" height="22">
@@ -208,17 +208,36 @@ fn SaveControls() -> impl IntoView {
     }
 }
 
+/// Open state of the group drawer that replaces the sidebar on narrow screens.
+#[derive(Clone, Copy)]
+pub struct GroupsDrawer(pub RwSignal<bool>);
+
 /// Main database view with sidebar, entry list, and detail panel
 #[component]
 fn DatabaseView() -> impl IntoView {
     let state = expect_context::<AppState>();
 
+    let groups_open = create_rw_signal(false);
+    provide_context(GroupsDrawer(groups_open));
+    // Choosing a group or tag in the narrow-screen drawer closes it.
+    create_effect(move |_| {
+        state.selected_group.track();
+        state.selected_tag.track();
+        groups_open.set(false);
+    });
+    let has_panel = move || state.selected_entry.get().is_some() || state.editor.get().is_some();
+
     view! {
-        <div class="database-view">
+        <div
+            class="database-view"
+            class:groups-open=move || groups_open.get()
+            class:has-panel=has_panel
+        >
             <Sidebar />
+            <div class="groups-backdrop" on:click=move |_| groups_open.set(false)></div>
             <div class="content-area">
                 <EntryList />
-                <Show when=move || state.selected_entry.get().is_some() || state.editor.get().is_some()>
+                <Show when=has_panel>
                     <EntryPanel />
                 </Show>
             </div>

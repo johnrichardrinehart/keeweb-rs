@@ -129,7 +129,6 @@ pub fn UnlockDialog() -> impl IntoView {
                                     type="password"
                                     id="password"
                                     class="form-input"
-                                    placeholder="Enter your master password"
                                     autocomplete="current-password"
                                     node_ref=password_input_ref
                                     prop:value=move || password.get()
