@@ -23,10 +23,6 @@ use crate::state::{AppState, AppView, HelperStatus, init_theme};
 /// Root application component
 #[component]
 pub fn App() -> impl IntoView {
-    // Log git revision on startup
-    let git_rev = option_env!("GIT_REVISION").unwrap_or("unknown");
-    log::info!("keeweb-rs revision: {}", git_rev);
-
     // Create the global application state
     let state = AppState::new();
     provide_context(state);
@@ -92,7 +88,26 @@ pub fn App() -> impl IntoView {
                 // Auto-lock countdown modal
                 <AutoLock />
             </main>
+            <BuildFooter />
         </div>
+    }
+}
+
+/// Source revision of this build and its commit time.
+#[component]
+fn BuildFooter() -> impl IntoView {
+    let revision = option_env!("GIT_REVISION").unwrap_or("dev");
+    let committed = option_env!("GIT_COMMITTED_AT")
+        .and_then(|seconds| seconds.parse::<i64>().ok())
+        .and_then(|seconds| chrono::DateTime::from_timestamp(seconds, 0))
+        .map(crate::model::format_local);
+
+    view! {
+        <footer class="app-footer">
+            "keeweb-rs "
+            <span class="app-footer-revision">{revision}</span>
+            {committed.map(|time| format!(" · built on {time}"))}
+        </footer>
     }
 }
 

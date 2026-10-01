@@ -184,8 +184,9 @@
               buildPhase = ''
                 export HOME=$(mktemp -d)
 
-                # Set git revision for build info (use self.rev if available, otherwise "dirty")
-                export GIT_REVISION="${self.rev or "dirty"}"
+                # Shown in the page footer: the short source revision and its commit time.
+                export GIT_REVISION="${self.shortRev or self.dirtyShortRev or "dev"}"
+                export GIT_COMMITTED_AT="${toString (self.lastModified or "")}"
 
                 # Set up vendored dependencies for cargo
                 mkdir -p .cargo

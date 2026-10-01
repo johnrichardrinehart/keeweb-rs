@@ -1,6 +1,9 @@
 fn main() {
-    // Pass GIT_REVISION to the build if set
-    if let Ok(rev) = std::env::var("GIT_REVISION") {
-        println!("cargo:rustc-env=GIT_REVISION={}", rev);
+    // The Nix build sets these; the page footer shows them.
+    for name in ["GIT_REVISION", "GIT_COMMITTED_AT"] {
+        println!("cargo:rerun-if-env-changed={name}");
+        if let Ok(value) = std::env::var(name) {
+            println!("cargo:rustc-env={name}={value}");
+        }
     }
 }
