@@ -93,12 +93,19 @@
           keeweb-server = pkgs.rustPlatform.buildRustPackage {
             pname = "keeweb-server";
             version = "0.1.0";
-            src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
+            # Only the server's own files, so that frontend and library changes keep
+            # the derivation, and the cached local helper, unchanged.
+            src = lib.fileset.toSource {
+              root = ./crates/keeweb-server;
+              fileset = lib.fileset.unions [
+                ./crates/keeweb-server/Cargo.toml
+                ./crates/keeweb-server/Cargo.lock
+                ./crates/keeweb-server/src
+              ];
+            };
+            cargoLock.lockFile = ./crates/keeweb-server/Cargo.lock;
 
             inherit buildInputs nativeBuildInputs;
-
-            cargoBuildFlags = ["-p" "keeweb-server"];
 
             meta = with lib; {
               description = "Optional backend server for keeweb-rs";
@@ -377,6 +384,15 @@
               touch $out/success
             '';
           };
+
+          # The server is its own Cargo workspace, so the workspace checks above skip it.
+          server-test = self'.packages.keeweb-server.overrideAttrs (old: {
+            pname = "keeweb-server-test";
+            doCheck = true;
+            postCheck = ''
+              cargo clippy --offline --all-targets -- -D warnings
+            '';
+          });
         };
       };
     };

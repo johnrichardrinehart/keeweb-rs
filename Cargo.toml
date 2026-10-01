@@ -4,9 +4,10 @@ members = [
     "crates/kdbx-core",
     "crates/kdbx-diff",
     "crates/keeweb-wasm",
-    "crates/keeweb-server",
     "frontend",
 ]
+# The server has its own workspace and Cargo.lock; see crates/keeweb-server/Cargo.toml.
+exclude = ["crates/keeweb-server"]
 
 [workspace.package]
 version = "0.1.0"
@@ -35,11 +36,6 @@ web-sys = "0.3"
 getrandom = { version = "0.2", features = ["js"] }
 serde-wasm-bindgen = "0.6"
 
-# Backend
-axum = { version = "0.7", features = ["ws"] }
-tokio = { version = "1", features = ["full"] }
-notify = "6"
-tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
 
 [profile.release]
 lto = true
