@@ -4,7 +4,7 @@ use leptos::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-use crate::state::{AppState, AppView};
+use crate::state::AppState;
 
 /// Inactivity timeout before showing warning (milliseconds)
 const WARNING_TIMEOUT_MS: u32 = 20_000; // 20 seconds
@@ -17,6 +17,7 @@ const COUNTDOWN_DURATION_MS: u32 = 10_000; // 10 seconds
 #[component]
 pub fn AutoLock() -> impl IntoView {
     let state = expect_context::<AppState>();
+    let any_unlocked = create_memo(move |_| state.tabs.with(|tabs| !tabs.is_empty()));
 
     // Countdown state
     let show_warning = create_rw_signal(false);
@@ -28,8 +29,8 @@ pub fn AutoLock() -> impl IntoView {
 
     // Reset inactivity timer - called on user activity
     let reset_timer = move || {
-        // Only track activity when database is open
-        if state.current_view.get_untracked() != AppView::Database {
+        // Only track activity while some vault is unlocked
+        if !any_unlocked.get_untracked() {
             return;
         }
 
@@ -49,7 +50,7 @@ pub fn AutoLock() -> impl IntoView {
         let timer_id = set_timeout(
             move || {
                 // Show warning modal and start countdown
-                if state.current_view.get_untracked() == AppView::Database {
+                if any_unlocked.get_untracked() {
                     show_warning.set(true);
                     countdown_seconds.set(10);
 
@@ -85,9 +86,9 @@ pub fn AutoLock() -> impl IntoView {
 
     // Set up activity listeners when component mounts
     create_effect(move |_| {
-        // Only set up listeners when database is open
-        if state.current_view.get() != AppView::Database {
-            // Clear timers when not in database view
+        // Only set up listeners while some vault is unlocked
+        if !any_unlocked.get() {
+            // Clear timers when every vault is locked
             if let Some(timer_id) = inactivity_timer.get_value() {
                 clear_timeout(timer_id);
                 inactivity_timer.set_value(None);
@@ -152,13 +153,13 @@ pub fn AutoLock() -> impl IntoView {
                     </div>
                     <h2 class="auto-lock-title">"Locking soon..."</h2>
                     <p class="auto-lock-message">
-                        "The database will lock due to inactivity in"
+                        "Unlocked vaults will lock due to inactivity in"
                     </p>
                     <div class="auto-lock-countdown">
                         {move || countdown_seconds.get()}
                     </div>
                     <p class="auto-lock-unit">"seconds"</p>
-                    <Show when=move || state.is_dirty()>
+                    <Show when=move || state.any_dirty()>
                         <p class="auto-lock-message">"Unsaved changes will be saved first."</p>
                     </Show>
                     <button

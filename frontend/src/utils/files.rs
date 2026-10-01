@@ -3,6 +3,7 @@
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Blob, BlobPropertyBag, File, HtmlAnchorElement, HtmlInputElement, Url};
+use zeroize::Zeroizing;
 
 /// Contents of a picked file.
 pub async fn read_file(file: &File) -> Result<Vec<u8>, String> {
@@ -10,6 +11,19 @@ pub async fn read_file(file: &File) -> Result<Vec<u8>, String> {
         .await
         .map_err(|_| format!("Failed to read {}", file.name()))?;
     Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
+/// Contents of a picked file holding key material. The browser's copy is overwritten
+/// once it has been copied out.
+pub async fn read_secret_file(file: &File) -> Result<Zeroizing<Vec<u8>>, String> {
+    let buffer = JsFuture::from(file.array_buffer())
+        .await
+        .map_err(|_| format!("Failed to read {}", file.name()))?;
+    let array = js_sys::Uint8Array::new(&buffer);
+    let mut data = Zeroizing::new(vec![0; array.length() as usize]);
+    array.copy_to(&mut data);
+    array.fill(0, 0, array.length());
+    Ok(data)
 }
 
 /// Files selected in the `<input type="file">` that fired `event`. Clears the input so

@@ -1,6 +1,12 @@
 //! Application state management
+//!
+//! Every unlocked vault is a [`Session`] in an ordered list shown as tabs. The signals on
+//! [`AppState`] hold the view state (unsaved changes, selection, notices) of the vault on
+//! screen only: switching parks them in the outgoing session and restores the incoming
+//! session's, so components always read the active vault.
 
 use crate::kdf;
+use crate::quick_unlock::{self, UnlockError};
 use crate::server::{self, ReplaceError};
 use crate::utils::files;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -15,15 +21,14 @@ use zeroize::Zeroizing;
 /// How many times a save merges with a newer server revision before giving up.
 const MAX_MERGE_ATTEMPTS: usize = 3;
 
-/// Current view/screen of the application
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Which screen is showing, see [`AppState::view`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppView {
-    /// Initial file picker screen
-    #[default]
+    /// Vault picker
     FilePicker,
-    /// Password unlock dialog
+    /// Unlock dialog over the vault picker
     Unlock,
-    /// Main database view
+    /// The active vault
     Database,
 }
 
@@ -137,6 +142,32 @@ pub fn init_theme(theme: Theme) {
     apply_theme(theme);
 }
 
+const KEY_FILE_HINT_PREFIX: &str = "keeweb-rs-key-file:";
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+/// Name of the key file last used to unlock `vault` on this device. Only the name is
+/// remembered, never the contents.
+pub fn key_file_hint(vault: &str) -> Option<String> {
+    local_storage()?
+        .get_item(&format!("{KEY_FILE_HINT_PREFIX}{vault}"))
+        .ok()
+        .flatten()
+}
+
+fn remember_key_file(vault: &str, name: Option<&str>) {
+    let Some(storage) = local_storage() else {
+        return;
+    };
+    let key = format!("{KEY_FILE_HINT_PREFIX}{vault}");
+    let _ = match name {
+        Some(name) => storage.set_item(&key, name),
+        None => storage.remove_item(&key),
+    };
+}
+
 /// Where a vault came from and where saves go.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatabaseSource {
@@ -157,6 +188,15 @@ impl DatabaseSource {
             Self::Local { name } | Self::Server { name, .. } => name,
         }
     }
+
+    /// Identity of the vault on this device: the server id for server vaults, otherwise
+    /// `local:` and the file name. Server ids are URL-safe base64 and contain no colon.
+    pub fn vault_key(&self) -> String {
+        match self {
+            Self::Local { name } => format!("local:{name}"),
+            Self::Server { id, .. } => id.clone(),
+        }
+    }
 }
 
 /// An encrypted vault waiting for its password.
@@ -166,24 +206,58 @@ pub struct PendingVault {
     pub source: DatabaseSource,
 }
 
+/// A key file chosen in the unlock dialog, read locally and never uploaded.
+#[derive(Clone)]
+pub struct KeyFile {
+    pub name: String,
+    pub data: Zeroizing<Vec<u8>>,
+}
+
+/// Identifies an unlocked vault for the lifetime of the page.
+pub type SessionId = u64;
+
+/// One tab of the vault tab strip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultTab {
+    pub id: SessionId,
+    pub name: String,
+    pub dirty: bool,
+}
+
+/// View state of a vault while another vault or the picker is on screen.
+#[derive(Default)]
+struct ParkedView {
+    changes: Vec<String>,
+    save_notice: Option<String>,
+    merge_conflicts: Vec<String>,
+    error: Option<String>,
+    editor: Option<EntryEditor>,
+    selected_group: Option<Uuid>,
+    selected_tag: Option<String>,
+    selected_entry: Option<Uuid>,
+    search_query: String,
+}
+
 /// An unlocked vault.
 struct Session {
+    id: SessionId,
     /// The document with all edits applied.
     local: WasmDocument,
     /// The document as last read from or written to the source; the merge base.
     base: WasmDocument,
-    /// Encrypted bytes of `base`, to unlock again after locking.
-    base_bytes: Vec<u8>,
     source: DatabaseSource,
+    /// Argon2 salt in `local`'s header, which the session's transformed key belongs to.
+    /// Saves and merges keep that header.
+    kdf_salt: Vec<u8>,
+    parked: ParkedView,
 }
 
-/// Leaving the unlocked vault, which discards unsaved changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Departure {
-    /// Close the vault and return to the vault picker.
-    Close,
-    /// Lock the vault and ask for its password again.
-    Lock,
+fn find_session(sessions: &[Session], id: SessionId) -> Option<&Session> {
+    sessions.iter().find(|session| session.id == id)
+}
+
+fn find_session_mut(sessions: &mut [Session], id: SessionId) -> Option<&mut Session> {
+    sessions.iter_mut().find(|session| session.id == id)
 }
 
 /// What the entry panel is editing.
@@ -213,7 +287,6 @@ pub enum HelperStatus {
 struct SaveProgress {
     local: WasmDocument,
     base: WasmDocument,
-    base_bytes: Vec<u8>,
     source: DatabaseSource,
     merged: bool,
     conflicts: Vec<String>,
@@ -222,16 +295,18 @@ struct SaveProgress {
 /// Global application state - all fields are Copy signals
 #[derive(Clone, Copy)]
 pub struct AppState {
-    /// Current view
-    pub current_view: RwSignal<AppView>,
-    /// Database name
-    pub database_name: RwSignal<String>,
+    /// Unlocked vaults in tab order
+    sessions: StoredValue<Vec<Session>>,
+    next_session: StoredValue<SessionId>,
+    /// Tab strip, in the order of `sessions`
+    pub tabs: RwSignal<Vec<VaultTab>>,
+    /// The vault on screen; `None` shows the vault picker
+    pub active: RwSignal<Option<SessionId>>,
     /// Vault awaiting its password
     pub pending: RwSignal<Option<PendingVault>>,
-    session: StoredValue<Option<Session>>,
-    /// All entries in the database, including the recycle bin
+    /// All entries in the active vault, including the recycle bin
     pub entries: RwSignal<Rc<Vec<EntryView>>>,
-    /// All groups in the database, root first
+    /// All groups in the active vault, root first
     pub groups: RwSignal<Rc<Vec<GroupView>>>,
     /// Database settings
     pub meta: RwSignal<Option<MetaView>>,
@@ -239,14 +314,14 @@ pub struct AppState {
     pub custom_icons: RwSignal<Rc<Vec<IconImage>>>,
     /// Summaries of unsaved changes, oldest first
     pub changes: RwSignal<Vec<String>>,
-    /// A save is running; edits are refused meanwhile
+    /// A save is running; edits in every vault are refused meanwhile
     pub saving: RwSignal<bool>,
     /// Short confirmation after a successful save
     pub save_notice: RwSignal<Option<String>>,
     /// Titles changed on both sides in the last merging save
     pub merge_conflicts: RwSignal<Vec<String>>,
-    /// Departure waiting for the unsaved-changes decision
-    pub departure: RwSignal<Option<Departure>>,
+    /// Lock of the active vault waiting for the unsaved-changes decision
+    pub lock_requested: RwSignal<bool>,
     /// Whether the unsaved-changes list is open
     pub show_changes: RwSignal<bool>,
     /// Whether the database settings dialog is open
@@ -261,7 +336,7 @@ pub struct AppState {
     pub selected_entry: RwSignal<Option<Uuid>>,
     /// Search query
     pub search_query: RwSignal<String>,
-    /// Error message to display
+    /// Error of the active vault, or of the picker
     pub error_message: RwSignal<Option<String>>,
     /// Connection state for the localhost native unlock helper
     pub helper_status: RwSignal<HelperStatus>,
@@ -278,10 +353,11 @@ impl AppState {
         let initial_theme = load_theme_preference();
 
         Self {
-            current_view: create_rw_signal(AppView::FilePicker),
-            database_name: create_rw_signal(String::new()),
+            sessions: store_value(Vec::new()),
+            next_session: store_value(1),
+            tabs: create_rw_signal(Vec::new()),
+            active: create_rw_signal(None),
             pending: create_rw_signal(None),
-            session: store_value(None),
             entries: create_rw_signal(Rc::new(Vec::new())),
             groups: create_rw_signal(Rc::new(Vec::new())),
             meta: create_rw_signal(None),
@@ -290,7 +366,7 @@ impl AppState {
             saving: create_rw_signal(false),
             save_notice: create_rw_signal(None),
             merge_conflicts: create_rw_signal(Vec::new()),
-            departure: create_rw_signal(None),
+            lock_requested: create_rw_signal(false),
             show_changes: create_rw_signal(false),
             show_settings: create_rw_signal(false),
             editor: create_rw_signal(None),
@@ -321,18 +397,78 @@ impl AppState {
         self.set_theme(next);
     }
 
-    /// Set pending file data and show unlock dialog
+    /// The screen to show (tracked).
+    pub fn view(&self) -> AppView {
+        if self.active.with(Option::is_some) {
+            AppView::Database
+        } else if self.pending.with(Option::is_some) {
+            AppView::Unlock
+        } else {
+            AppView::FilePicker
+        }
+    }
+
+    /// File name of the vault on screen (tracked).
+    pub fn active_name(&self) -> Option<String> {
+        let active = self.active.get()?;
+        self.tabs.with(|tabs| {
+            tabs.iter()
+                .find(|tab| tab.id == active)
+                .map(|tab| tab.name.clone())
+        })
+    }
+
+    /// Whether any unlocked vault has unsaved changes (tracked).
+    pub fn any_dirty(&self) -> bool {
+        self.tabs.with(|tabs| tabs.iter().any(|tab| tab.dirty))
+    }
+
+    /// Device identity of the vault on screen, see [`DatabaseSource::vault_key`].
+    pub fn active_vault_key(&self) -> Option<String> {
+        self.with_active(|session| session.source.vault_key())
+    }
+
+    fn with_active<O>(&self, f: impl FnOnce(&Session) -> O) -> Option<O> {
+        let id = self.active.get_untracked()?;
+        self.sessions
+            .with_value(|sessions| find_session(sessions, id).map(f))
+    }
+
+    /// Ask for the password of an encrypted vault, or show it if it is already unlocked.
     pub fn set_pending_file(&self, data: Vec<u8>, source: DatabaseSource) {
-        self.database_name.set(source.name().to_string());
+        if self.switch_to_vault(&source.vault_key()) {
+            return;
+        }
+        self.error_message.set(None);
         self.pending.set(Some(PendingVault { data, source }));
-        self.current_view.set(AppView::Unlock);
+    }
+
+    /// Shows the unlocked session of the vault with this [`DatabaseSource::vault_key`].
+    /// Returns false when that vault is not unlocked.
+    pub fn switch_to_vault(&self, vault: &str) -> bool {
+        let id = self.sessions.with_value(|sessions| {
+            sessions
+                .iter()
+                .find(|session| session.source.vault_key() == vault)
+                .map(|session| session.id)
+        });
+        match id {
+            Some(id) => {
+                self.activate(id);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Derive the transformed key with the fastest available Argon2, then open the
-    /// document on the main thread.
+    /// document on the main thread. With `enroll_fingerprint` the session keys are then
+    /// stored for fingerprint unlock on this device.
     pub fn unlock(
         &self,
         password: Zeroizing<String>,
+        key_file: Option<KeyFile>,
+        enroll_fingerprint: bool,
         is_unlocking: RwSignal<bool>,
         error_signal: RwSignal<Option<String>>,
     ) {
@@ -351,8 +487,20 @@ impl AppState {
                 return;
             }
         };
-        let composite_key = keeweb_wasm::composite_key(&password);
+        // Next to a key file an empty password means the vault has no password part.
+        let password = (!password.is_empty() || key_file.is_none()).then_some(password);
+        let composite_key = match keeweb_wasm::composite_key(
+            password.as_ref().map(|password| password.as_str()),
+            key_file.as_ref().map(|file| file.data.as_slice()),
+        ) {
+            Ok(key) => key,
+            Err(error) => {
+                fail(error);
+                return;
+            }
+        };
         drop(password);
+        let key_file_name = key_file.map(|file| file.name);
 
         let state = *self;
         spawn_local(async move {
@@ -360,50 +508,285 @@ impl AppState {
                 Ok(transformed_key) => WasmDocument::open(&data, &composite_key, &transformed_key),
                 Err(error) => Err(error),
             };
-            match opened {
-                Ok(document) => state.open_session(document, data, source),
-                Err(error) => fail(error),
+            let document = match opened {
+                Ok(document) => document,
+                Err(error) => {
+                    fail(error);
+                    return;
+                }
+            };
+            remember_key_file(&source.vault_key(), key_file_name.as_deref());
+            let id = state.open_session(document, source, params.salt());
+            if enroll_fingerprint {
+                if let Err(error) = state.enroll_fingerprint(id).await {
+                    state.set_error(
+                        id,
+                        Some(format!(
+                            "Fingerprint unlock was not set up: {error} You can set it up later in Database settings."
+                        )),
+                    );
+                }
             }
         });
     }
 
-    fn open_session(&self, document: WasmDocument, data: Vec<u8>, source: DatabaseSource) {
-        self.database_name.set(source.name().to_string());
-        self.session.set_value(Some(Session {
-            base: document.clone(),
-            local: document,
-            base_bytes: data,
-            source,
-        }));
-        self.pending.set(None);
-        self.changes.set(Vec::new());
-        self.merge_conflicts.set(Vec::new());
-        self.save_notice.set(None);
-        self.error_message.set(None);
-        self.refresh_views();
-        self.current_view.set(AppView::Database);
+    /// Unlock the pending vault with its fingerprint unlock `record`. A record that no
+    /// longer decrypts or opens the vault is deleted.
+    pub fn unlock_with_fingerprint(
+        &self,
+        record: quick_unlock::Record,
+        is_unlocking: RwSignal<bool>,
+        error_signal: RwSignal<Option<String>>,
+    ) {
+        let fail = move |message: String| {
+            error_signal.set(Some(message));
+            is_unlocking.set(false);
+        };
+        let Some(PendingVault { data, source }) = self.pending.get_untracked() else {
+            fail("No file data pending".to_string());
+            return;
+        };
+        let params = match WasmDocument::kdf_params(&data) {
+            Ok(params) => params,
+            Err(error) => {
+                fail(error);
+                return;
+            }
+        };
+
+        let state = *self;
+        spawn_local(async move {
+            let vault = source.vault_key();
+            let stored = match quick_unlock::unlock(&vault, &record).await {
+                Ok(stored) => stored,
+                Err(UnlockError::Declined(message)) => {
+                    fail(message);
+                    return;
+                }
+                Err(UnlockError::Invalid(message)) => {
+                    let _ = quick_unlock::forget(&vault).await;
+                    fail(format!(
+                        "{message} Fingerprint unlock was turned off for this vault; enter the password."
+                    ));
+                    return;
+                }
+            };
+            let salt = params.salt();
+            // Another client re-salted the file: run the KDF on the stored composite key.
+            let resalted = salt != stored.kdf_salt;
+            let transformed_key = if resalted {
+                match kdf::derive_transformed_key(&params, &stored.composite).await {
+                    Ok(key) => key,
+                    Err(error) => {
+                        fail(error);
+                        return;
+                    }
+                }
+            } else {
+                stored.transformed.clone()
+            };
+            let document = match WasmDocument::open(&data, &stored.composite, &transformed_key) {
+                Ok(document) => document,
+                Err(_) => {
+                    let _ = quick_unlock::forget(&vault).await;
+                    fail(
+                        "The keys stored for fingerprint unlock no longer open this vault, so fingerprint unlock was turned off. Enter the password."
+                            .to_string(),
+                    );
+                    return;
+                }
+            };
+            let restored = if resalted {
+                stored.restore(&vault, &transformed_key, &salt).await
+            } else {
+                Ok(())
+            };
+            let id = state.open_session(document, source, salt);
+            if let Err(error) = restored {
+                state.set_error(
+                    id,
+                    Some(format!("Fingerprint unlock could not be updated: {error}")),
+                );
+            }
+        });
     }
 
-    /// Rebuild the reactive views from the local document.
-    fn refresh_views(&self) {
-        let views = self.session.with_value(|session| {
-            session.as_ref().map(|session| {
-                let document = session.local.document();
-                let icons: Vec<IconImage> = document
-                    .custom_icons()
-                    .into_iter()
-                    .map(|icon| IconImage {
-                        uuid: icon.uuid,
-                        url: format!("data:image/png;base64,{}", BASE64.encode(&icon.png)),
-                    })
-                    .collect();
+    /// Stores the keys of vault `id` for fingerprint unlock on this device.
+    pub async fn enroll_fingerprint(self, id: SessionId) -> Result<(), String> {
+        let keys = self.sessions.with_value(|sessions| {
+            find_session(sessions, id).map(|session| {
                 (
-                    document.entries(),
-                    document.groups(),
-                    document.meta(),
-                    icons,
+                    session.source.vault_key(),
+                    session.source.name().to_string(),
+                    Zeroizing::new(*session.local.composite_key()),
+                    Zeroizing::new(*session.local.transformed_key()),
+                    session.kdf_salt.clone(),
                 )
             })
+        });
+        let Some((vault, label, composite, transformed, kdf_salt)) = keys else {
+            return Err("The vault is no longer unlocked.".to_string());
+        };
+        quick_unlock::enroll(&vault, &label, &composite, &transformed, &kdf_salt).await
+    }
+
+    fn open_session(
+        &self,
+        document: WasmDocument,
+        source: DatabaseSource,
+        kdf_salt: Vec<u8>,
+    ) -> SessionId {
+        let id = self.next_session.get_value();
+        self.next_session.set_value(id + 1);
+        let tab = VaultTab {
+            id,
+            name: source.name().to_string(),
+            dirty: false,
+        };
+        self.sessions.update_value(|sessions| {
+            sessions.push(Session {
+                id,
+                base: document.clone(),
+                local: document,
+                source,
+                kdf_salt,
+                parked: ParkedView::default(),
+            })
+        });
+        self.tabs.update(|tabs| tabs.push(tab));
+        self.activate(id);
+        id
+    }
+
+    /// Puts vault `id` on screen with the view state it had when it was left.
+    pub fn activate(&self, id: SessionId) {
+        if self.active.get_untracked() == Some(id) {
+            return;
+        }
+        batch(|| {
+            let parked = self
+                .sessions
+                .try_update_value(|sessions| {
+                    find_session_mut(sessions, id)
+                        .map(|session| std::mem::take(&mut session.parked))
+                })
+                .flatten();
+            let Some(parked) = parked else {
+                return;
+            };
+            self.park_active();
+            self.pending.set(None);
+            self.show_view(parked);
+            self.active.set(Some(id));
+            self.refresh_views();
+        });
+    }
+
+    /// Shows the vault picker; unlocked vaults stay unlocked in their tabs.
+    pub fn show_picker(&self) {
+        batch(|| self.park_active());
+    }
+
+    /// Moves the view state of the vault on screen into its session and clears the
+    /// signals.
+    fn park_active(&self) {
+        let Some(id) = self.active.get_untracked() else {
+            return;
+        };
+        let parked = ParkedView {
+            changes: self.changes.get_untracked(),
+            save_notice: self.save_notice.get_untracked(),
+            merge_conflicts: self.merge_conflicts.get_untracked(),
+            error: self.error_message.get_untracked(),
+            editor: self.editor.get_untracked(),
+            selected_group: self.selected_group.get_untracked(),
+            selected_tag: self.selected_tag.get_untracked(),
+            selected_entry: self.selected_entry.get_untracked(),
+            search_query: self.search_query.get_untracked(),
+        };
+        self.sessions.update_value(|sessions| {
+            if let Some(session) = find_session_mut(sessions, id) {
+                session.parked = parked;
+            }
+        });
+        self.active.set(None);
+        self.show_view(ParkedView::default());
+        self.entries.set(Rc::new(Vec::new()));
+        self.groups.set(Rc::new(Vec::new()));
+        self.meta.set(None);
+        self.custom_icons.set(Rc::new(Vec::new()));
+        self.lock_requested.set(false);
+        self.show_changes.set(false);
+        self.show_settings.set(false);
+    }
+
+    fn show_view(&self, view: ParkedView) {
+        let ParkedView {
+            changes,
+            save_notice,
+            merge_conflicts,
+            error,
+            editor,
+            selected_group,
+            selected_tag,
+            selected_entry,
+            search_query,
+        } = view;
+        self.changes.set(changes);
+        self.save_notice.set(save_notice);
+        self.merge_conflicts.set(merge_conflicts);
+        self.error_message.set(error);
+        self.editor.set(editor);
+        self.selected_group.set(selected_group);
+        self.selected_tag.set(selected_tag);
+        self.selected_entry.set(selected_entry);
+        self.search_query.set(search_query);
+    }
+
+    /// Sets the error of vault `id`, shown now if it is on screen, otherwise when it is.
+    fn set_error(&self, id: SessionId, error: Option<String>) {
+        if self.active.get_untracked() == Some(id) {
+            self.error_message.set(error);
+        } else {
+            self.sessions.update_value(|sessions| {
+                if let Some(session) = find_session_mut(sessions, id) {
+                    session.parked.error = error;
+                }
+            });
+        }
+    }
+
+    fn set_dirty(&self, id: SessionId, dirty: bool) {
+        let stale = self
+            .tabs
+            .with_untracked(|tabs| tabs.iter().any(|tab| tab.id == id && tab.dirty != dirty));
+        if stale {
+            self.tabs.update(|tabs| {
+                if let Some(tab) = tabs.iter_mut().find(|tab| tab.id == id) {
+                    tab.dirty = dirty;
+                }
+            });
+        }
+    }
+
+    /// Rebuild the reactive views from the active vault's local document.
+    fn refresh_views(&self) {
+        let views = self.with_active(|session| {
+            let document = session.local.document();
+            let icons: Vec<IconImage> = document
+                .custom_icons()
+                .into_iter()
+                .map(|icon| IconImage {
+                    uuid: icon.uuid,
+                    url: format!("data:image/png;base64,{}", BASE64.encode(&icon.png)),
+                })
+                .collect();
+            (
+                document.entries(),
+                document.groups(),
+                document.meta(),
+                icons,
+            )
         });
         let Some((entries, groups, meta, icons)) = views else {
             return;
@@ -437,40 +820,24 @@ impl AppState {
         }
     }
 
-    fn clear_session(&self) {
-        self.session.set_value(None);
-        self.entries.set(Rc::new(Vec::new()));
-        self.groups.set(Rc::new(Vec::new()));
-        self.meta.set(None);
-        self.custom_icons.set(Rc::new(Vec::new()));
-        self.changes.set(Vec::new());
-        self.merge_conflicts.set(Vec::new());
-        self.save_notice.set(None);
-        self.departure.set(None);
-        self.show_changes.set(false);
-        self.show_settings.set(false);
-        self.editor.set(None);
-        self.selected_group.set(None);
-        self.selected_tag.set(None);
-        self.selected_entry.set(None);
-        self.search_query.set(String::new());
-    }
-
-    /// Apply an edit to the local document and record it as unsaved.
+    /// Apply an edit to the active vault's local document and record it as unsaved.
     pub fn apply(&self, change: Change) -> Result<ChangeOutcome, String> {
         if self.saving.get_untracked() {
             return Err("Wait for the current save to finish.".to_string());
         }
+        let not_open = || "No database is open.".to_string();
+        let id = self.active.get_untracked().ok_or_else(not_open)?;
         let outcome = self
-            .session
-            .try_update_value(|session| match session {
-                Some(session) => session.local.apply(change),
-                None => Err("No database is open.".to_string()),
+            .sessions
+            .try_update_value(|sessions| {
+                find_session_mut(sessions, id).map(|session| session.local.apply(change))
             })
-            .unwrap_or_else(|| Err("No database is open.".to_string()))?;
+            .flatten()
+            .unwrap_or_else(|| Err(not_open()))?;
         if outcome.changed {
             self.changes
                 .update(|changes| changes.push(outcome.summary.clone()));
+            self.set_dirty(id, true);
             self.save_notice.set(None);
             self.refresh_views();
         }
@@ -492,25 +859,21 @@ impl AppState {
     }
 
     pub fn attachment(&self, entry: Uuid, name: &str) -> Option<Vec<u8>> {
-        self.session.with_value(|session| {
-            session
-                .as_ref()
-                .and_then(|session| session.local.document().attachment(entry, name))
-        })
+        self.with_active(|session| session.local.document().attachment(entry, name))
+            .flatten()
     }
 
     pub fn history_attachment(&self, entry: Uuid, index: usize, name: &str) -> Option<Vec<u8>> {
-        self.session.with_value(|session| {
-            session.as_ref().and_then(|session| {
-                session
-                    .local
-                    .document()
-                    .history_attachment(entry, index, name)
-            })
+        self.with_active(|session| {
+            session
+                .local
+                .document()
+                .history_attachment(entry, index, name)
         })
+        .flatten()
     }
 
-    /// Whether there are unsaved changes (tracked).
+    /// Whether the active vault has unsaved changes (tracked).
     pub fn is_dirty(&self) -> bool {
         self.changes.with(|changes| !changes.is_empty())
     }
@@ -592,31 +955,36 @@ impl AppState {
             .with(|entries| entries.iter().find(|entry| entry.uuid == selected).cloned())
     }
 
-    /// Save to the vault's source. For server vaults a stale revision triggers a
+    /// Save vault `id` to its source. For server vaults a stale revision triggers a
     /// three-way merge with the server copy, up to [`MAX_MERGE_ATTEMPTS`] times.
-    pub async fn save(self) -> Result<(), String> {
+    pub async fn save_session(self, id: SessionId) -> Result<(), String> {
         if self.saving.get_untracked() {
             return Err("A save is already in progress.".to_string());
         }
-        let snapshot = self.session.with_value(|session| {
-            session.as_ref().map(|session| SaveProgress {
+        let snapshot = self.sessions.with_value(|sessions| {
+            find_session(sessions, id).map(|session| SaveProgress {
                 local: session.local.clone(),
                 base: session.base.clone(),
-                base_bytes: Vec::new(),
                 source: session.source.clone(),
                 merged: false,
                 conflicts: Vec::new(),
             })
         });
         let Some(mut progress) = snapshot else {
-            return Err("No database is open.".to_string());
+            return Err("The vault is no longer unlocked.".to_string());
         };
 
         self.saving.set(true);
-        self.save_notice.set(None);
+        if self.active.get_untracked() == Some(id) {
+            self.save_notice.set(None);
+        }
         let result = match progress.source.clone() {
             DatabaseSource::Local { name } => save_local(&mut progress, &name),
-            DatabaseSource::Server { id, name, .. } => save_server(&mut progress, &id, &name).await,
+            DatabaseSource::Server {
+                id: server_id,
+                name,
+                ..
+            } => save_server(&mut progress, &server_id, &name).await,
         };
         self.saving.set(false);
 
@@ -625,108 +993,141 @@ impl AppState {
         }
         // Edits are refused while saving, so the session's local document is the one
         // this save started from and may be replaced by the merged result.
-        let merged = progress.merged;
-        self.session.update_value(|session| {
-            if let Some(session) = session {
-                session.local = progress.local;
-                session.source = progress.source;
-                if !progress.base_bytes.is_empty() {
-                    session.base = progress.base;
-                    session.base_bytes = progress.base_bytes;
+        let SaveProgress {
+            local,
+            base,
+            source,
+            merged,
+            mut conflicts,
+        } = progress;
+        let saved = result.is_ok();
+        let mut notice = saved.then(|| {
+            if merged {
+                "Saved with changes from the server"
+            } else {
+                "Saved"
+            }
+            .to_string()
+        });
+        let name = source.name().to_string();
+        let active = self.active.get_untracked() == Some(id);
+        let found = self
+            .sessions
+            .try_update_value(|sessions| {
+                let session = find_session_mut(sessions, id)?;
+                session.local = local;
+                session.base = base;
+                session.source = source;
+                if saved && !active {
+                    session.parked.changes.clear();
+                    session.parked.save_notice = notice.take();
+                    session.parked.merge_conflicts = std::mem::take(&mut conflicts);
+                }
+                Some(())
+            })
+            .flatten();
+        if found.is_none() {
+            // Locked while saving.
+            return result;
+        }
+        self.tabs.update(|tabs| {
+            if let Some(tab) = tabs.iter_mut().find(|tab| tab.id == id) {
+                tab.name = name;
+                if saved {
+                    tab.dirty = false;
                 }
             }
         });
-        if merged {
-            self.refresh_views();
-        }
-        if result.is_ok() {
-            self.changes.set(Vec::new());
-            self.save_notice.set(Some(
-                if merged {
-                    "Saved with changes from the server"
-                } else {
-                    "Saved"
-                }
-                .to_string(),
-            ));
-            self.merge_conflicts.set(progress.conflicts);
+        if active {
+            if merged {
+                self.refresh_views();
+            }
+            if saved {
+                self.changes.set(Vec::new());
+                self.save_notice.set(notice);
+                self.merge_conflicts.set(conflicts);
+            }
         }
         result
     }
 
-    /// Save from a button or shortcut; failures go to the error banner.
+    /// Save the vault on screen from a button or shortcut; failures go to its error
+    /// banner.
     pub fn save_in_background(&self) {
+        let Some(id) = self.active.get_untracked() else {
+            return;
+        };
         let state = *self;
         spawn_local(async move {
-            match state.save().await {
-                Ok(()) => state.error_message.set(None),
-                Err(error) => state
-                    .error_message
-                    .set(Some(format!("Save failed: {error}"))),
-            }
+            let error = state
+                .save_session(id)
+                .await
+                .err()
+                .map(|error| format!("Save failed: {error}"));
+            state.set_error(id, error);
         });
     }
 
-    /// Leave the vault, asking first when there are unsaved changes.
-    pub fn request_departure(&self, departure: Departure) {
-        if self.changes.with_untracked(|changes| changes.is_empty()) {
-            self.depart(departure);
-        } else {
-            self.departure.set(Some(departure));
-        }
-    }
-
-    /// Leave the vault, discarding unsaved changes.
-    pub fn depart(&self, departure: Departure) {
-        match departure {
-            Departure::Close => self.close_database(),
-            Departure::Lock => self.lock(),
-        }
-    }
-
-    /// Close the current database
-    pub fn close_database(&self) {
-        self.clear_session();
-        self.pending.set(None);
-        self.database_name.set(String::new());
-        self.current_view.set(AppView::FilePicker);
-    }
-
-    /// Forget the decrypted document and ask for the password of the last saved
-    /// version again.
-    pub fn lock(&self) {
-        let pending = self.session.with_value(|session| {
-            session.as_ref().map(|session| PendingVault {
-                data: session.base_bytes.clone(),
-                source: session.source.clone(),
-            })
-        });
-        self.clear_session();
-        match pending {
-            Some(pending) => {
-                self.pending.set(Some(pending));
-                self.current_view.set(AppView::Unlock);
-            }
-            None => self.close_database(),
-        }
-    }
-
-    /// Lock after inactivity. Unsaved changes are saved first; if that fails the vault
-    /// stays unlocked and shows why.
-    pub async fn auto_lock(self) {
-        if self.current_view.get_untracked() != AppView::Database {
+    /// Lock the vault on screen, asking first when it has unsaved changes.
+    pub fn request_lock(&self) {
+        let Some(id) = self.active.get_untracked() else {
             return;
+        };
+        if self.changes.with_untracked(Vec::is_empty) {
+            self.lock_session(id);
+        } else {
+            self.lock_requested.set(true);
         }
-        if !self.changes.with_untracked(|changes| changes.is_empty()) {
-            if let Err(error) = self.save().await {
-                self.error_message.set(Some(format!(
-                    "Auto-lock was cancelled because saving failed: {error}"
-                )));
-                return;
+    }
+
+    /// Drop the keys and document of vault `id`, discarding unsaved changes, and remove
+    /// its tab. Locking the vault on screen shows the picker.
+    pub fn lock_session(&self, id: SessionId) {
+        batch(|| {
+            if self.active.get_untracked() == Some(id) {
+                self.park_active();
+            }
+            self.sessions
+                .update_value(|sessions| sessions.retain(|session| session.id != id));
+            self.tabs.update(|tabs| tabs.retain(|tab| tab.id != id));
+        });
+    }
+
+    /// Lock every vault after inactivity. Unsaved changes are saved first; a vault whose
+    /// save fails stays unlocked and shows why.
+    pub async fn auto_lock(self) {
+        let ids: Vec<SessionId> = self
+            .tabs
+            .with_untracked(|tabs| tabs.iter().map(|tab| tab.id).collect());
+        let mut kept = None;
+        for id in ids {
+            // Re-read: earlier saves yield to the event loop.
+            let dirty = self
+                .tabs
+                .with_untracked(|tabs| tabs.iter().find(|tab| tab.id == id).map(|tab| tab.dirty));
+            match dirty {
+                None => continue,
+                Some(true) => {
+                    if let Err(error) = self.save_session(id).await {
+                        self.set_error(
+                            id,
+                            Some(format!(
+                                "Auto-lock was cancelled because saving failed: {error}"
+                            )),
+                        );
+                        kept.get_or_insert(id);
+                        continue;
+                    }
+                }
+                Some(false) => {}
+            }
+            self.lock_session(id);
+        }
+        if let Some(id) = kept {
+            if self.active.get_untracked().is_none() {
+                self.activate(id);
             }
         }
-        self.departure.set(None);
-        self.lock();
     }
 }
 
@@ -741,7 +1142,6 @@ fn save_local(progress: &mut SaveProgress, name: &str) -> Result<(), String> {
     let bytes = progress.local.save()?;
     files::download_bytes(name, &bytes)?;
     progress.base = progress.local.clone();
-    progress.base_bytes = bytes;
     Ok(())
 }
 
@@ -760,7 +1160,6 @@ async fn save_server(progress: &mut SaveProgress, id: &str, name: &str) -> Resul
                     revision: written.revision,
                 };
                 progress.base = progress.local.clone();
-                progress.base_bytes = bytes;
                 return Ok(());
             }
             Err(ReplaceError::Failed(error)) => return Err(error),
@@ -787,7 +1186,7 @@ async fn merge_server_revision(
 ) -> Result<(), String> {
     let (remote_bytes, remote_revision) = server::download(id, name).await?;
     // The server copy may have been re-salted by another client, so derive its key from
-    // its own header with this session's password.
+    // its own header with this session's composite key.
     let params = WasmDocument::kdf_params(&remote_bytes)?;
     let transformed_key =
         kdf::derive_transformed_key(&params, progress.local.composite_key()).await?;
@@ -802,7 +1201,6 @@ async fn merge_server_revision(
         }
     }
     progress.base = remote;
-    progress.base_bytes = remote_bytes;
     progress.source = DatabaseSource::Server {
         id: id.to_string(),
         name: name.to_string(),

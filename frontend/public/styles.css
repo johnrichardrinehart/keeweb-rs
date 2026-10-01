@@ -235,6 +235,72 @@ input {
     height: 100%;
 }
 
+/* Vault tabs */
+.vault-tabs {
+    display: flex;
+    flex-shrink: 0;
+    align-items: flex-end;
+    gap: 0.25rem;
+    padding: 0.4rem clamp(1rem, 3vw, 2.5rem) 0;
+    overflow-x: auto;
+    /* Tabs overlap the bottom border by 1 px; do not let that scroll. */
+    overflow-y: hidden;
+    background: color-mix(in srgb, var(--color-bg-secondary) 82%, transparent);
+    border-bottom: 1px solid var(--color-border);
+    scrollbar-width: thin;
+}
+
+.vault-tab {
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    max-width: 14rem;
+    min-height: 34px;
+    margin-bottom: -1px;
+    padding: 0.4rem 0.85rem;
+    color: var(--color-text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: 0;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.vault-tab:hover {
+    color: var(--color-text);
+    background: var(--color-surface-hover);
+}
+
+.vault-tab.active {
+    color: var(--color-text);
+    background: var(--color-surface);
+    border-color: var(--color-border);
+}
+
+.vault-tab-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vault-tab-dirty {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    background: var(--color-warning);
+    border-radius: 50%;
+}
+
+.vault-tab-new {
+    flex: 0 0 auto;
+    padding-inline: 0.6rem;
+}
+
 /* Buttons */
 .btn {
     display: inline-flex;
@@ -602,6 +668,65 @@ input {
     margin-top: 1rem;
     color: var(--color-text-muted);
     font-size: 0.9rem;
+}
+
+.btn-fingerprint {
+    width: 100%;
+    min-height: 52px;
+    font-size: 1rem;
+}
+
+.unlock-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 1.25rem 0;
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
+.unlock-divider::before,
+.unlock-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
+}
+
+.unlock-dialog .key-file-group {
+    margin-top: 1.25rem;
+}
+
+.key-file-label {
+    display: block;
+    margin-bottom: 0.6rem;
+    color: var(--color-text-secondary);
+    font-size: 1rem;
+}
+
+.key-file-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.key-file-button {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.key-file-group .section-hint {
+    margin-top: 0.45rem;
+    overflow-wrap: anywhere;
+}
+
+.unlock-dialog .fingerprint-option {
+    margin-top: 1.25rem;
+    white-space: normal;
 }
 
 /* Form elements */
@@ -1656,6 +1781,21 @@ input {
     font-size: 0.75rem;
 }
 
+.settings-section {
+    display: grid;
+    justify-items: start;
+    gap: 0.6rem;
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--color-border);
+}
+
+.settings-section-title {
+    color: var(--color-text);
+    font-size: 0.95rem;
+    font-weight: 650;
+}
+
 /* Group picker */
 .group-picker {
     display: grid;
@@ -2031,6 +2171,14 @@ input {
 
     .file-picker {
         padding: 2rem 1rem 2.5rem;
+    }
+
+    .vault-tabs {
+        padding-inline: 0.8rem;
+    }
+
+    .vault-tab {
+        max-width: 10rem;
     }
 
     .dialog-overlay {

@@ -189,6 +189,10 @@ async fn handle_file_async(file: File, state: AppState) {
 }
 
 async fn open_stored_file(id: String, name: String, state: AppState) {
+    // Server vaults are identified by their id, see `DatabaseSource::vault_key`.
+    if state.switch_to_vault(&id) {
+        return;
+    }
     state.error_message.set(None);
     match server::download(&id, &name).await {
         Ok((data, revision)) => {

@@ -10,7 +10,7 @@ use crate::components::{
     entry_list::EntryList,
     file_picker::FilePicker,
     guard::{
-        ChangesDialog, DepartureGuard, MergeConflicts, install_save_shortcut, install_unload_guard,
+        ChangesDialog, LockGuard, MergeConflicts, install_save_shortcut, install_unload_guard,
     },
     sidebar::Sidebar,
     theme_toggle::ThemeToggle,
@@ -18,7 +18,7 @@ use crate::components::{
 };
 use crate::helper_client;
 use crate::kdf::init_argon2;
-use crate::state::{AppState, AppView, Departure, HelperStatus, init_theme};
+use crate::state::{AppState, AppView, HelperStatus, init_theme};
 
 /// Root application component
 #[component]
@@ -59,29 +59,32 @@ pub fn App() -> impl IntoView {
     install_unload_guard(state);
     install_save_shortcut(state);
 
+    let unlocking = move || state.view() == AppView::Unlock;
+    // Each vault gets fresh components, so per-component state never leaks between tabs.
+    let active = create_memo(move |_| state.active.get());
+
     view! {
         <div class="app">
             <Header />
+            <VaultTabs />
             <main class="app-main">
                 <div
                     class="app-content"
-                    inert=move || state.current_view.get() == AppView::Unlock
-                    aria-hidden=move || if state.current_view.get() == AppView::Unlock { "true" } else { "false" }
+                    inert=unlocking
+                    aria-hidden=move || if unlocking() { "true" } else { "false" }
                 >
-                    <Show
-                        when=move || state.current_view.get() != AppView::Database
-                        fallback=move || view! { <DatabaseView /> }
-                    >
-                        <FilePicker />
-                    </Show>
+                    {move || match active.get() {
+                        Some(_) => view! { <DatabaseView /> }.into_view(),
+                        None => view! { <FilePicker /> }.into_view(),
+                    }}
                 </div>
 
                 // Unlock dialog overlay
-                <Show when=move || state.current_view.get() == AppView::Unlock>
+                <Show when=unlocking>
                     <UnlockDialog />
                 </Show>
 
-                <DepartureGuard />
+                <LockGuard />
                 <ChangesDialog />
                 <MergeConflicts />
                 <DatabaseSettings />
@@ -97,7 +100,7 @@ pub fn App() -> impl IntoView {
 #[component]
 fn Header() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let in_database = move || state.current_view.get() == AppView::Database;
+    let in_database = move || state.active.with(Option::is_some);
 
     view! {
         <header class="app-header" class:in-database=in_database>
@@ -113,7 +116,7 @@ fn Header() -> impl IntoView {
                 </div>
                 <Show when=in_database>
                     <span class="database-name">
-                        {move || state.database_name.get()}
+                        {move || state.active_name().unwrap_or_default()}
                     </span>
                 </Show>
             </div>
@@ -147,8 +150,8 @@ fn Header() -> impl IntoView {
                     </button>
                     <button
                         class="btn btn-secondary btn-lock"
-                        on:click=move |_| state.request_departure(Departure::Close)
-                        title="Close this vault and open another"
+                        on:click=move |_| state.show_picker()
+                        title="Show the vault picker; this vault stays unlocked in its tab"
                         aria-label="Close vault"
                     >
                         <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -158,8 +161,8 @@ fn Header() -> impl IntoView {
                     </button>
                     <button
                         class="btn btn-secondary btn-lock"
-                        on:click=move |_| state.request_departure(Departure::Lock)
-                        title="Lock database"
+                        on:click=move |_| state.request_lock()
+                        title="Lock this vault and forget its keys"
                         aria-label="Lock vault"
                     >
                         <svg viewBox="0 0 24 24" width="16" height="16">
@@ -170,6 +173,60 @@ fn Header() -> impl IntoView {
                 </Show>
             </div>
         </header>
+    }
+}
+
+/// Tabs of the unlocked vaults, and one that shows the vault picker.
+#[component]
+fn VaultTabs() -> impl IntoView {
+    let state = expect_context::<AppState>();
+
+    view! {
+        <Show when=move || state.tabs.with(|tabs| !tabs.is_empty())>
+            <nav
+                class="vault-tabs"
+                aria-label="Unlocked vaults"
+                inert=move || state.view() == AppView::Unlock
+            >
+                <For
+                    each=move || state.tabs.get()
+                    key=|tab| (tab.id, tab.name.clone(), tab.dirty)
+                    children=move |tab| {
+                        let id = tab.id;
+                        let selected = move || state.active.get() == Some(id);
+                        view! {
+                            <button
+                                type="button"
+                                class="vault-tab"
+                                class:active=selected
+                                aria-current=move || selected().then_some("true")
+                                title=tab.name.clone()
+                                on:click=move |_| state.activate(id)
+                            >
+                                <span class="vault-tab-name">{tab.name}</span>
+                                {tab.dirty.then(|| view! {
+                                    <span class="vault-tab-dirty" aria-hidden="true"></span>
+                                    <span class="visually-hidden">" (unsaved changes)"</span>
+                                })}
+                            </button>
+                        }
+                    }
+                />
+                <button
+                    type="button"
+                    class="vault-tab vault-tab-new"
+                    class:active=move || state.active.with(Option::is_none)
+                    aria-current=move || state.active.with(Option::is_none).then_some("true")
+                    title="Open another vault"
+                    aria-label="Open another vault"
+                    on:click=move |_| state.show_picker()
+                >
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                        <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z"/>
+                    </svg>
+                </button>
+            </nav>
+        </Show>
     }
 }
 

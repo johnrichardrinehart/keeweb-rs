@@ -8,6 +8,7 @@ mod components;
 pub mod helper_client;
 mod kdf;
 mod model;
+mod quick_unlock;
 mod server;
 mod state;
 mod utils;

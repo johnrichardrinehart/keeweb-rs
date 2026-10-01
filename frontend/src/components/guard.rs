@@ -1,16 +1,16 @@
-//! Unsaved-change protection: the browser `beforeunload` prompt, the in-app departure
-//! guard, the unsaved-changes list and the merge conflict report.
+//! Unsaved-change protection: the browser `beforeunload` prompt, the lock guard, the
+//! unsaved-changes list and the merge conflict report.
 
 use leptos::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use crate::components::dialog::Dialog;
-use crate::state::{AppState, AppView, Departure};
+use crate::state::AppState;
 
-/// Registers a `beforeunload` handler only while there are unsaved changes, so the
-/// browser shows its generic leave-page prompt and clean pages stay eligible for the
-/// back/forward cache.
+/// Registers a `beforeunload` handler only while some unlocked vault has unsaved
+/// changes, so the browser shows its generic leave-page prompt and clean pages stay
+/// eligible for the back/forward cache.
 pub fn install_unload_guard(state: AppState) {
     let handler: Closure<dyn Fn(web_sys::BeforeUnloadEvent)> =
         Closure::new(|event: web_sys::BeforeUnloadEvent| {
@@ -22,7 +22,7 @@ pub fn install_unload_guard(state: AppState) {
     let installed = store_value(false);
 
     create_effect(move |_| {
-        let dirty = state.is_dirty();
+        let dirty = state.any_dirty();
         if dirty == installed.get_value() {
             return;
         }
@@ -41,14 +41,14 @@ pub fn install_unload_guard(state: AppState) {
     });
 }
 
-/// Ctrl+S / Cmd+S saves the open vault.
+/// Ctrl+S / Cmd+S saves the vault on screen.
 pub fn install_save_shortcut(state: AppState) {
     let handler: Closure<dyn Fn(web_sys::KeyboardEvent)> =
         Closure::new(move |event: web_sys::KeyboardEvent| {
             if !(event.ctrl_key() || event.meta_key()) || !event.key().eq_ignore_ascii_case("s") {
                 return;
             }
-            if state.current_view.get_untracked() != AppView::Database {
+            if state.active.get_untracked().is_none() {
                 return;
             }
             event.prevent_default();
@@ -79,34 +79,33 @@ pub fn ChangeList() -> impl IntoView {
     }
 }
 
-/// Asks what to do with unsaved changes before closing or locking the vault.
+/// Asks what to do with unsaved changes before locking the vault on screen.
 #[component]
-pub fn DepartureGuard() -> impl IntoView {
+pub fn LockGuard() -> impl IntoView {
     let state = expect_context::<AppState>();
     let error = create_rw_signal(Option::<String>::None);
 
-    let departure = move || state.departure.get();
     let cancel = move || {
         error.set(None);
-        state.departure.set(None);
+        state.lock_requested.set(false);
     };
     let discard = move |_| {
-        if let Some(departure) = state.departure.get_untracked() {
-            error.set(None);
-            state.departure.set(None);
-            state.depart(departure);
+        error.set(None);
+        state.lock_requested.set(false);
+        if let Some(id) = state.active.get_untracked() {
+            state.lock_session(id);
         }
     };
-    let save_and_leave = move |_| {
-        let Some(departure) = state.departure.get_untracked() else {
+    let save_and_lock = move |_| {
+        let Some(id) = state.active.get_untracked() else {
             return;
         };
         error.set(None);
         spawn_local(async move {
-            match state.save().await {
+            match state.save_session(id).await {
                 Ok(()) => {
-                    state.departure.set(None);
-                    state.depart(departure);
+                    state.lock_requested.set(false);
+                    state.lock_session(id);
                 }
                 Err(message) => error.set(Some(message)),
             }
@@ -114,12 +113,9 @@ pub fn DepartureGuard() -> impl IntoView {
     };
 
     view! {
-        <Show when=move || departure().is_some()>
+        <Show when=move || state.lock_requested.get()>
             <Dialog
-                title=Signal::derive(move || match departure() {
-                    Some(Departure::Lock) => "Lock with unsaved changes?".to_string(),
-                    _ => "Close with unsaved changes?".to_string(),
-                })
+                title="Lock with unsaved changes?"
                 class="guard-dialog"
                 on_close=move |_| cancel()
             >
@@ -151,7 +147,7 @@ pub fn DepartureGuard() -> impl IntoView {
                     </button>
                     <button
                         class="btn btn-primary"
-                        on:click=save_and_leave
+                        on:click=save_and_lock
                         disabled=move || state.saving.get()
                     >
                         {move || if state.saving.get() { "Saving…" } else { "Save" }}
