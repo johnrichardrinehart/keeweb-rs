@@ -13,8 +13,8 @@ mod state;
 
 use axum::{
     Router,
-    http::HeaderValue,
-    routing::{get, post},
+    http::{HeaderValue, header::ETAG},
+    routing::{get, post, put},
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -58,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/files/:path",
             get(routes::files::download_file).put(routes::files::upload_file),
         )
+        .route("/api/files/:id/content", put(routes::files::replace_file))
         .route("/api/conflicts", get(routes::files::list_conflicts))
         .route("/api/events", get(routes::sse::events))
         .route("/api/settings", get(routes::settings::get_settings));
@@ -71,7 +72,8 @@ async fn main() -> anyhow::Result<()> {
             CorsLayer::new()
                 .allow_origin(origin)
                 .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_headers(Any)
+                .expose_headers([ETAG]),
         );
     }
 

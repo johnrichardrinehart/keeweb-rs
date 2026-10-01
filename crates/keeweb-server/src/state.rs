@@ -1,6 +1,9 @@
 //! Application state
 
 use crate::config::Config;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// File system event
@@ -23,6 +26,9 @@ pub struct AppState {
     pub kdbx_files: tokio::sync::RwLock<Vec<KdbxFileInfo>>,
     /// Currently known conflict files
     pub conflicts: tokio::sync::RwLock<Vec<ConflictInfo>>,
+    /// Per-file locks that make the revision check and rename of a conditional
+    /// replace atomic with respect to other API writers of the same file.
+    replace_locks: std::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 /// Information about a KDBX file
@@ -34,6 +40,8 @@ pub struct KdbxFileInfo {
     pub name: String,
     pub size: u64,
     pub modified: chrono::DateTime<chrono::Utc>,
+    /// Lowercase hex SHA-256 of the file contents.
+    pub revision: String,
 }
 
 /// Information about a conflict
@@ -53,7 +61,17 @@ impl AppState {
             events_tx,
             kdbx_files: tokio::sync::RwLock::new(Vec::new()),
             conflicts: tokio::sync::RwLock::new(Vec::new()),
+            replace_locks: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Lock that serializes conditional replaces of one database file.
+    pub fn replace_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self
+            .replace_locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        locks.entry(path.to_path_buf()).or_default().clone()
     }
 
     /// Add or update a KDBX file
