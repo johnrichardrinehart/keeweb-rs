@@ -4,10 +4,9 @@ use leptos::spawn_local;
 use leptos::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::KeyboardEvent;
 
 use crate::helper_client;
-use crate::state::{AppState, AppView};
+use crate::state::{AppState, AppView, HelperStatus};
 
 /// Unlock dialog component
 #[component]
@@ -18,58 +17,8 @@ pub fn UnlockDialog() -> impl IntoView {
     let error = create_rw_signal(Option::<String>::None);
     let is_unlocking = create_rw_signal(false);
     let show_password = create_rw_signal(false);
-    let show_helper_config = create_rw_signal(false);
-
-    // Initialize helper URL from current config or default
-    let initial_url = helper_client::get_helper_url()
-        .unwrap_or_else(|| helper_client::DEFAULT_HELPER_URL.to_string());
-    let helper_url = create_rw_signal(initial_url);
-    let is_available = helper_client::is_helper_available();
-    log::info!(
-        "UnlockDialog init: is_helper_available() = {}",
-        is_available
-    );
-    let helper_enabled = create_rw_signal(is_available);
-    let helper_error = create_rw_signal(Option::<String>::None);
-    let helper_connecting = create_rw_signal(false);
 
     let password_input_ref = create_node_ref::<leptos::html::Input>();
-
-    // Configure helper when URL changes and is enabled
-    let apply_helper_config = move || {
-        let url = helper_url.get();
-        if !url.is_empty() {
-            helper_error.set(None);
-            helper_connecting.set(true);
-            helper_client::configure_helper(&url);
-            // Spawn async task to verify connection
-            spawn_local(async move {
-                match helper_client::check_helper_available().await {
-                    Ok(available) => {
-                        helper_connecting.set(false);
-                        helper_enabled.set(available);
-                        if !available {
-                            log::warn!("Helper server at {} is not reachable", url);
-                            helper_error
-                                .set(Some("Connection failed: server not reachable".to_string()));
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to check helper availability: {}", e);
-                        helper_connecting.set(false);
-                        helper_enabled.set(false);
-                        helper_error.set(Some(format!("Connection failed: {}", e)));
-                    }
-                }
-            });
-        }
-    };
-
-    // Disable helper
-    let disable_helper = move || {
-        helper_client::disable_helper();
-        helper_enabled.set(false);
-    };
 
     // Focus password input on mount
     create_effect(move |_| {
@@ -86,14 +35,11 @@ pub fn UnlockDialog() -> impl IntoView {
         let window = web_sys::window().expect("no window");
         let closure: Closure<dyn Fn()> = Closure::new(move || {
             spawn_local(async move {
-                match helper_client::check_helper_available_fresh().await {
-                    Ok(available) => {
-                        helper_enabled.set(available);
-                    }
-                    Err(_) => {
-                        helper_enabled.set(false);
-                    }
-                }
+                let status = match helper_client::check_helper_available_fresh().await {
+                    Ok(true) => HelperStatus::Connected,
+                    Ok(false) | Err(_) => HelperStatus::Unavailable,
+                };
+                state.helper_status.set(status);
             });
         });
 
@@ -147,13 +93,6 @@ pub fn UnlockDialog() -> impl IntoView {
         try_unlock();
     };
 
-    // Handle key press (Enter to submit)
-    let on_keydown = move |ev: KeyboardEvent| {
-        if ev.key() == "Enter" {
-            try_unlock();
-        }
-    };
-
     // Handle cancel
     let on_cancel = move |_| {
         state.pending_file_data.set(None);
@@ -168,10 +107,18 @@ pub fn UnlockDialog() -> impl IntoView {
 
     view! {
         <div class="dialog-overlay">
-            <div class="dialog unlock-dialog">
+            <div
+                class="dialog unlock-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="unlock-title"
+            >
                 <div class="dialog-header">
-                    <h2>"Unlock Database"</h2>
-                    <button class="dialog-close" on:click=on_cancel>
+                    <div>
+                        <span class="dialog-eyebrow">"Encrypted database"</span>
+                        <h2 id="unlock-title">"Unlock your vault"</h2>
+                    </div>
+                    <button class="dialog-close" on:click=on_cancel aria-label="Close unlock dialog">
                         <svg viewBox="0 0 24 24" width="20" height="20">
                             <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                         </svg>
@@ -196,7 +143,6 @@ pub fn UnlockDialog() -> impl IntoView {
                                     node_ref=password_input_ref
                                     prop:value=move || password.get()
                                     on:input=move |ev| password.set(event_target_value(&ev))
-                                    on:keydown=on_keydown
                                     disabled=move || is_unlocking.get()
                                 />
                                 <button
@@ -229,87 +175,34 @@ pub fn UnlockDialog() -> impl IntoView {
                         </Show>
                     </form>
 
-                    // Helper server configuration section
-                    <div class="helper-config-section">
-                        <button
-                            type="button"
-                            class="helper-config-toggle"
-                            on:click=move |_| show_helper_config.update(|v| *v = !*v)
-                        >
-                            <svg viewBox="0 0 24 24" width="16" height="16" style="margin-right: 4px;">
-                                <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
-                            </svg>
-                            {move || {
-                                if helper_enabled.get() {
-                                    "Unlock helper: connected"
-                                } else if show_helper_config.get() {
-                                    "Hide unlock helper settings"
-                                } else {
-                                    "Configure unlock helper (optional)"
-                                }
-                            }}
-                            {move || if helper_enabled.get() {
-                                view! {
-                                    <span class="helper-status-indicator helper-status-connected" title="Helper server connected">
-                                        " ✓"
-                                    </span>
-                                }.into_view()
-                            } else {
-                                view! { <span></span> }.into_view()
-                            }}
-                        </button>
-
-                        <Show when=move || show_helper_config.get()>
-                            <div class="helper-config-panel">
-                                <p class="helper-description">
-                                    "For databases with high-memory Argon2 settings (1GB+), browser unlock can take ~30 seconds. "
-                                    "Running the keeweb-server locally provides native-speed unlock (~4s)."
-                                </p>
-                                <div class="form-group">
-                                    <label for="helper-url">"Helper Server URL"</label>
-                                    <div class="helper-url-input-wrapper">
-                                        <input
-                                            type="text"
-                                            id="helper-url"
-                                            class="form-input"
-                                            placeholder="http://127.0.0.1:8081"
-                                            prop:value=move || helper_url.get()
-                                            on:input=move |ev| helper_url.set(event_target_value(&ev))
-                                            disabled=move || helper_enabled.get()
-                                        />
-                                        <Show
-                                            when=move || helper_enabled.get()
-                                            fallback=move || view! {
-                                                <button
-                                                    type="button"
-                                                    class="btn btn-small"
-                                                    on:click=move |_| apply_helper_config()
-                                                    disabled=move || helper_connecting.get()
-                                                >
-                                                    {move || if helper_connecting.get() { "Connecting..." } else { "Connect" }}
-                                                </button>
-                                            }
-                                        >
-                                            <button
-                                                type="button"
-                                                class="btn btn-small btn-danger"
-                                                on:click=move |_| disable_helper()
-                                            >
-                                                "Disable"
-                                            </button>
-                                        </Show>
-                                    </div>
-                                </div>
-                                <Show when=move || helper_error.get().is_some()>
-                                    <p class="helper-status helper-status-error">
-                                        {move || helper_error.get().unwrap_or_default()}
-                                    </p>
-                                </Show>
-                                <Show when=move || helper_enabled.get()>
-                                    <p class="helper-status helper-status-enabled">
-                                        "Helper connected - high-memory databases will use native Argon2"
-                                    </p>
-                                </Show>
+                    <div
+                        class="unlock-helper"
+                        class:unlock-helper-connected=move || state.helper_status.get() == HelperStatus::Connected
+                        aria-live="polite"
+                    >
+                        <div class="unlock-helper-summary">
+                            <span class="status-dot"></span>
+                            <div>
+                                <strong>
+                                    {move || if state.helper_status.get() == HelperStatus::Connected {
+                                        "Native unlock ready"
+                                    } else {
+                                        "Browser unlock mode"
+                                    }}
+                                </strong>
+                                <span>
+                                    {move || if state.helper_status.get() == HelperStatus::Connected {
+                                        "Argon2 runs in the localhost helper."
+                                    } else {
+                                        "Argon2 runs in WebAssembly and can take longer."
+                                    }}
+                                </span>
+                            </div>
+                        </div>
+                        <Show when=move || state.helper_status.get() == HelperStatus::Unavailable>
+                            <div class="helper-command">
+                                <span>"For native-speed unlock, run:"</span>
+                                <code>"nix run github:johnrichardrinehart/keeweb-rs#helper"</code>
                             </div>
                         </Show>
                     </div>

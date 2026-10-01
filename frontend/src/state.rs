@@ -436,6 +436,15 @@ pub struct GroupInfo {
     pub icon: Option<u32>,
 }
 
+/// Connection state for the optional localhost unlock helper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HelperStatus {
+    #[default]
+    Checking,
+    Connected,
+    Unavailable,
+}
+
 /// Global application state - all fields are Copy signals
 #[derive(Clone, Copy)]
 pub struct AppState {
@@ -463,6 +472,8 @@ pub struct AppState {
     pub search_query: RwSignal<String>,
     /// Error message to display
     pub error_message: RwSignal<Option<String>>,
+    /// Connection state for the localhost native unlock helper
+    pub helper_status: RwSignal<HelperStatus>,
     /// Backend URL (if configured)
     #[allow(dead_code)]
     pub backend_url: RwSignal<Option<String>>,
@@ -488,6 +499,7 @@ impl AppState {
             selected_entry: create_rw_signal(None),
             search_query: create_rw_signal(String::new()),
             error_message: create_rw_signal(None),
+            helper_status: create_rw_signal(HelperStatus::Checking),
             backend_url: create_rw_signal(None),
             theme: create_rw_signal(initial_theme),
         }

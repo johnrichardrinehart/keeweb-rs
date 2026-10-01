@@ -30,6 +30,7 @@ pub fn ThemeToggle() -> impl IntoView {
             class="theme-toggle"
             on:click=on_click
             title=move || format!("Theme: {} (click to toggle)", theme_label())
+            aria-label=move || format!("Current theme: {}. Change theme", theme_label())
         >
             {theme_icon}
         </button>

@@ -8,7 +8,7 @@ use crate::components::{
     sidebar::Sidebar, theme_toggle::ThemeToggle, unlock_dialog::UnlockDialog,
 };
 use crate::helper_client;
-use crate::state::{AppState, AppView, init_argon2, init_theme};
+use crate::state::{AppState, AppView, HelperStatus, init_argon2, init_theme};
 
 /// Root application component
 #[component]
@@ -38,27 +38,32 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // Try to auto-connect to helper server on localhost:8081
-    spawn_local(async {
-        if helper_client::try_auto_connect().await {
-            #[cfg(debug_assertions)]
-            log::info!(
-                "Auto-connected to helper server at {}",
-                helper_client::DEFAULT_HELPER_URL
-            );
-        }
+    // Probe the localhost helper once at startup. UnlockDialog keeps it fresh.
+    spawn_local(async move {
+        let status = if helper_client::try_auto_connect().await {
+            HelperStatus::Connected
+        } else {
+            HelperStatus::Unavailable
+        };
+        state.helper_status.set(status);
     });
 
     view! {
         <div class="app">
             <Header />
             <main class="app-main">
-                <Show
-                    when=move || state.current_view.get() == AppView::FilePicker
-                    fallback=move || view! { <DatabaseView /> }
+                <div
+                    class="app-content"
+                    inert=move || state.current_view.get() == AppView::Unlock
+                    aria-hidden=move || if state.current_view.get() == AppView::Unlock { "true" } else { "false" }
                 >
-                    <FilePicker />
-                </Show>
+                    <Show
+                        when=move || state.current_view.get() != AppView::Database
+                        fallback=move || view! { <DatabaseView /> }
+                    >
+                        <FilePicker />
+                    </Show>
+                </div>
 
                 // Unlock dialog overlay
                 <Show when=move || state.current_view.get() == AppView::Unlock>
@@ -80,7 +85,15 @@ fn Header() -> impl IntoView {
     view! {
         <header class="app-header">
             <div class="header-left">
-                <h1 class="app-title">"KeeWeb-RS"</h1>
+                <div class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22">
+                        <path fill="currentColor" d="M12 2 4.5 5v5.8c0 4.7 3.2 9.1 7.5 10.2 4.3-1.1 7.5-5.5 7.5-10.2V5L12 2Zm0 4.1a3 3 0 0 1 1 5.8v3.6h-2v-3.6a3 3 0 0 1 1-5.8Z"/>
+                    </svg>
+                </div>
+                <div class="brand-copy">
+                    <h1 class="app-title">"KeeWeb RS"</h1>
+                    <span class="app-subtitle">"A private KeePass reader"</span>
+                </div>
                 <Show when=move || state.current_view.get() == AppView::Database>
                     <span class="database-name">
                         {move || state.database_name.get()}
@@ -88,6 +101,18 @@ fn Header() -> impl IntoView {
                 </Show>
             </div>
             <div class="header-right">
+                <span
+                    class="helper-pill"
+                    class:helper-pill-connected=move || state.helper_status.get() == HelperStatus::Connected
+                    aria-live="polite"
+                >
+                    <span class="status-dot"></span>
+                    {move || match state.helper_status.get() {
+                        HelperStatus::Checking => "Checking helper",
+                        HelperStatus::Connected => "Native helper ready",
+                        HelperStatus::Unavailable => "Browser mode",
+                    }}
+                </span>
                 <ThemeToggle />
                 <Show when=move || state.current_view.get() == AppView::Database>
                     <button

@@ -7,7 +7,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{DragEvent, Event, File, HtmlInputElement, Request, RequestInit, Response};
 
-use crate::state::{AppState, DatabaseSource};
+use crate::state::{AppState, DatabaseSource, HelperStatus};
 
 #[derive(Clone, Deserialize)]
 struct StoredFile {
@@ -21,8 +21,9 @@ struct StoredFile {
 pub fn FilePicker() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_dragging = create_rw_signal(false);
-    let stored_files = create_rw_signal(Vec::<StoredFile>::new());
     let file_input_ref = create_node_ref::<leptos::html::Input>();
+    let stored_files = create_rw_signal(Vec::<StoredFile>::new());
+    let storage_loaded = create_rw_signal(!server_storage_enabled());
 
     if server_storage_enabled() {
         spawn_local(async move {
@@ -30,6 +31,7 @@ pub fn FilePicker() -> impl IntoView {
                 Ok(files) => stored_files.set(files),
                 Err(error) => state.error_message.set(Some(error)),
             }
+            storage_loaded.set(true);
         });
     }
 
@@ -73,32 +75,172 @@ pub fn FilePicker() -> impl IntoView {
     };
 
     view! {
-        <div class="file-picker">
-            <div
-                class="drop-zone"
-                class:dragging=move || is_dragging.get()
-                on:dragover=on_drag_over
-                on:dragleave=on_drag_leave
-                on:drop=on_drop
-            >
-                <div class="drop-zone-content">
-                    <div class="drop-icon">
-                        <svg viewBox="0 0 24 24" width="64" height="64">
-                            <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                        </svg>
+        <section class="file-picker" aria-labelledby="welcome-title">
+            <div class="welcome-shell">
+                <div class="welcome-copy">
+                    <span class="eyebrow">"Local-first password manager"</span>
+                    <h2 id="welcome-title">"Your vault, opened where it belongs."</h2>
+                    <p class="welcome-lede">
+                        "Open a vault from your private server or add another one. Database files stay encrypted until this browser unlocks them."
+                    </p>
+
+                    <div class="trust-list" aria-label="Privacy guarantees">
+                        <div class="trust-item">
+                            <span class="trust-icon" aria-hidden="true">"01"</span>
+                            <div>
+                                <strong>"One private vault library"</strong>
+                                <span>"Choose any stored KDBX database from this page."</span>
+                            </div>
+                        </div>
+                        <div class="trust-item">
+                            <span class="trust-icon" aria-hidden="true">"02"</span>
+                            <div>
+                                <strong>"Decryption stays local"</strong>
+                                <span>"The server sends encrypted bytes. Your password stays here."</span>
+                            </div>
+                        </div>
+                        <div class="trust-item">
+                            <span class="trust-icon" aria-hidden="true">"03"</span>
+                            <div>
+                                <strong>"Native unlock, on your machine"</strong>
+                                <span>"The optional helper accelerates Argon2 on localhost."</span>
+                            </div>
+                        </div>
                     </div>
-                    <h2>"Drop your KDBX file here"</h2>
-                    <p>"or"</p>
-                    <button class="btn btn-primary" on:click=open_file_dialog>
-                        "Browse Files"
-                    </button>
-                    <input
-                        type="file"
-                        accept=".kdbx"
-                        style="display: none"
-                        node_ref=file_input_ref
-                        on:change=on_file_change
-                    />
+
+                    <div
+                        class="helper-card"
+                        class:helper-card-connected=move || state.helper_status.get() == HelperStatus::Connected
+                        aria-live="polite"
+                    >
+                        <div class="helper-card-heading">
+                            <span class="status-dot"></span>
+                            <strong>
+                                {move || match state.helper_status.get() {
+                                    HelperStatus::Checking => "Looking for the local helper",
+                                    HelperStatus::Connected => "Native unlock is ready",
+                                    HelperStatus::Unavailable => "Native helper is not running",
+                                }}
+                            </strong>
+                        </div>
+                        {move || match state.helper_status.get() {
+                            HelperStatus::Checking => view! {
+                                <p>"Checking 127.0.0.1:8081…"</p>
+                            }.into_view(),
+                            HelperStatus::Connected => view! {
+                                <p>"KeeWeb will use native Argon2 for a faster unlock."</p>
+                            }.into_view(),
+                            HelperStatus::Unavailable => view! {
+                                <div>
+                                    <p>"Start it in another terminal. Browser unlock remains available."</p>
+                                    <code class="run-command">"nix run github:johnrichardrinehart/keeweb-rs#helper"</code>
+                                </div>
+                            }.into_view(),
+                        }}
+                    </div>
+                </div>
+
+                <div class="vault-workspace">
+                    <Show when=server_storage_enabled>
+                        <section class="vault-library" aria-labelledby="vault-library-title">
+                            <div class="vault-library-header">
+                                <div>
+                                    <span class="drop-kicker">"Private server"</span>
+                                    <h3 id="vault-library-title">"Your vaults"</h3>
+                                </div>
+                                <span class="vault-count">
+                                    {move || stored_files.get().len()}
+                                </span>
+                            </div>
+                            <Show
+                                when=move || storage_loaded.get()
+                                fallback=|| view! {
+                                    <div class="vault-loading">"Loading encrypted vaults…"</div>
+                                }
+                            >
+                                <Show
+                                    when=move || !stored_files.get().is_empty()
+                                    fallback=|| view! {
+                                        <div class="vault-empty">
+                                            <strong>"No stored vaults yet"</strong>
+                                            <span>"Add your first database below."</span>
+                                        </div>
+                                    }
+                                >
+                                    <div class="vault-list">
+                                        {move || stored_files.get().into_iter().map(|file| {
+                                            let id = file.id.clone();
+                                            let name = file.name.clone();
+                                            let display_name = file.name.clone();
+                                            view! {
+                                                <button
+                                                    class="vault-row"
+                                                    type="button"
+                                                    on:click=move |_| {
+                                                        let id = id.clone();
+                                                        let name = name.clone();
+                                                        spawn_local(open_stored_file(id, name, state));
+                                                    }
+                                                >
+                                                    <span class="vault-row-icon" aria-hidden="true">
+                                                        <svg viewBox="0 0 24 24" width="18" height="18">
+                                                            <path fill="currentColor" d="M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Zm-7-2a2 2 0 0 1 4 0v2h-4V6Zm3 10.73V18h-2v-1.27a2 2 0 1 1 2 0Z"/>
+                                                        </svg>
+                                                    </span>
+                                                    <span class="vault-row-copy">
+                                                        <strong>{display_name}</strong>
+                                                        <span>{format_size(file.size)}</span>
+                                                    </span>
+                                                    <svg class="vault-row-arrow" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                                                        <path fill="currentColor" d="m9.3 17.3 4.6-4.6a1 1 0 0 0 0-1.4L9.3 6.7l1.4-1.4 4.6 4.6a3 3 0 0 1 0 4.2l-4.6 4.6-1.4-1.4Z"/>
+                                                    </svg>
+                                                </button>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                </Show>
+                            </Show>
+                        </section>
+                    </Show>
+
+                    <div
+                        class="drop-zone"
+                        class:drop-zone-compact=server_storage_enabled()
+                        class:dragging=move || is_dragging.get()
+                        on:dragover=on_drag_over
+                        on:dragleave=on_drag_leave
+                        on:drop=on_drop
+                    >
+                        <div class="drop-zone-content">
+                            <div class="drop-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" width="56" height="56">
+                                    <path fill="currentColor" d="M12 2 4.5 5v5.8c0 4.7 3.2 9.1 7.5 10.2 4.3-1.1 7.5-5.5 7.5-10.2V5L12 2Zm0 5a2.5 2.5 0 0 1 1 4.8V16h-2v-4.2A2.5 2.5 0 0 1 12 7Z"/>
+                                </svg>
+                            </div>
+                            <span class="drop-kicker">
+                                {if server_storage_enabled() { "Add a vault" } else { "KeePass database" }}
+                            </span>
+                            <h3>"Open a .kdbx file"</h3>
+                            <p>
+                                {if server_storage_enabled() {
+                                    "Upload an encrypted database or drag it here."
+                                } else {
+                                    "Choose a file or drag it into this window."
+                                }}
+                            </p>
+                            <button class="btn btn-primary btn-large" type="button" on:click=open_file_dialog>
+                                {if server_storage_enabled() { "Upload database" } else { "Choose database" }}
+                            </button>
+                            <input
+                                type="file"
+                                accept=".kdbx"
+                                class="visually-hidden"
+                                node_ref=file_input_ref
+                                on:change=on_file_change
+                            />
+                            <span class="drop-footnote">"KeePass 2 · KDBX 4"</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -107,67 +249,7 @@ pub fn FilePicker() -> impl IntoView {
                     {move || state.error_message.get().unwrap_or_default()}
                 </p>
             </Show>
-
-            <Show when=server_storage_enabled>
-                <section class="stored-files">
-                    <h3>"Stored databases"</h3>
-                    <Show
-                        when=move || !stored_files.get().is_empty()
-                        fallback=|| view! { <p>"No databases are stored."</p> }
-                    >
-                        <div class="stored-file-list">
-                            {move || stored_files.get().into_iter().map(|file| {
-                                let id = file.id.clone();
-                                let name = file.name.clone();
-                                let display_name = file.name.clone();
-                                view! {
-                                    <button
-                                        class="stored-file"
-                                        type="button"
-                                        on:click=move |_| {
-                                            let id = id.clone();
-                                            let name = name.clone();
-                                            spawn_local(open_stored_file(id, name, state));
-                                        }
-                                    >
-                                        <span>{display_name}</span>
-                                        <span class="stored-file-size">{format_size(file.size)}</span>
-                                    </button>
-                                }
-                            }).collect_view()}
-                        </div>
-                    </Show>
-                </section>
-            </Show>
-
-            <div class="file-picker-options">
-                <h3>"Or connect to cloud storage"</h3>
-                <div class="cloud-buttons">
-                    <button class="btn btn-cloud" disabled=true title="Coming soon">
-                        <span class="cloud-icon google-drive"></span>
-                        "Google Drive"
-                    </button>
-                    <button class="btn btn-cloud" disabled=true title="Coming soon">
-                        <span class="cloud-icon dropbox"></span>
-                        "Dropbox"
-                    </button>
-                    <button class="btn btn-cloud" disabled=true title="Coming soon">
-                        <span class="cloud-icon box"></span>
-                        "Box"
-                    </button>
-                </div>
-            </div>
-
-            <div class="file-picker-footer">
-                <p class="security-note">
-                    {if server_storage_enabled() {
-                        "Dropped files stay encrypted and are copied to this private server."
-                    } else {
-                        "Your files are processed entirely in your browser. No data is sent to any server."
-                    }}
-                </p>
-            </div>
-        </div>
+        </section>
     }
 }
 
