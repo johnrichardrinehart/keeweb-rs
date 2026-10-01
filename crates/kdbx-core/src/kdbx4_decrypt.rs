@@ -363,20 +363,20 @@ pub fn decrypt_kdbx4_with_key(
     Ok(xml_data)
 }
 
-fn compute_hmac_block_key(block_index: u64, hmac_key: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn compute_hmac_block_key(block_index: u64, hmac_key: &[u8]) -> Result<Vec<u8>> {
     let mut hasher = Sha512::new();
     hasher.update(block_index.to_le_bytes());
     hasher.update(hmac_key);
     Ok(hasher.finalize().to_vec())
 }
 
-fn read_hmac_block_stream(data: &[u8], hmac_key: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn read_hmac_block_stream(data: &[u8], hmac_key: &[u8]) -> Result<Vec<u8>> {
     let mut result = Vec::new();
     let mut pos = 0;
     let mut block_index: u64 = 0;
 
     loop {
-        if pos + 4 > data.len() {
+        if pos + 36 > data.len() {
             return Err(Error::ParseError("Truncated HMAC block".to_string()));
         }
 
@@ -421,7 +421,7 @@ fn read_hmac_block_stream(data: &[u8], hmac_key: &[u8]) -> Result<Vec<u8>> {
     Ok(result)
 }
 
-fn decrypt_aes256_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn decrypt_aes256_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
     use cipher::block_padding::Pkcs7;
 
     let cipher = Aes256Cbc::new_from_slices(key, iv)
@@ -435,7 +435,7 @@ fn decrypt_aes256_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
     Ok(decrypted.to_vec())
 }
 
-fn decrypt_chacha20_poly1305(data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn decrypt_chacha20_poly1305(data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
     // KDBX4 uses ChaCha20 stream cipher (not the full AEAD mode)
     // The HMAC block stream already provides integrity verification
     // So we just need to apply the ChaCha20 keystream to decrypt
@@ -468,7 +468,7 @@ fn decrypt_chacha20_poly1305(data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Ve
     Ok(buffer)
 }
 
-fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = GzDecoder::new(data);
     let mut result = Vec::new();
     decoder
@@ -576,6 +576,13 @@ impl ProtectedStreamCipher {
 
         String::from_utf8(decrypted)
             .map_err(|e| Error::DecryptError(format!("UTF-8 decode failed: {}", e)))
+    }
+
+    /// Encrypt a plaintext value and return it base64-encoded, advancing the stream
+    pub fn encrypt(&mut self, plaintext: &str) -> String {
+        let mut data = plaintext.as_bytes().to_vec();
+        self.cipher.apply_keystream(&mut data);
+        base64::engine::general_purpose::STANDARD.encode(data)
     }
 }
 

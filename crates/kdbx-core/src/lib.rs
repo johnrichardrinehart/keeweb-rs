@@ -4,6 +4,7 @@
 //! It wraps the `keepass` crate and is designed to compile to WebAssembly for browser usage.
 
 mod database;
+pub mod document;
 mod entry;
 mod error;
 mod group;
