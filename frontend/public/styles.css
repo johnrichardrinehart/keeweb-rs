@@ -431,7 +431,16 @@ textarea {
     height: 100%;
 }
 
+/* The build footer stays visible above dialog overlays, which end where it starts. */
+.app {
+    --footer-height: 1.6rem;
+}
+
 .app-footer {
+    position: relative;
+    z-index: 1001;
+    box-sizing: border-box;
+    height: var(--footer-height);
     flex-shrink: 0;
     padding: var(--space-1) var(--space-4);
     color: var(--color-text-muted);
@@ -677,7 +686,7 @@ textarea {
 /* Dialogs */
 .dialog-overlay {
     position: fixed;
-    inset: 0;
+    inset: 0 0 var(--footer-height) 0;
     z-index: 1000;
     display: flex;
     align-items: center;
@@ -1830,6 +1839,12 @@ textarea {
     }
 }
 
+/* Grid items default to min-width: auto, and a notes field sized to its content would
+   then widen its column past the panel. */
+.detail-column {
+    min-width: 0;
+}
+
 .entry-detail-footer {
     display: flex;
     flex-wrap: wrap;
@@ -1889,6 +1904,7 @@ textarea {
 }
 
 .field-textarea {
+    max-width: 100%;
     min-height: 104px;
     max-height: 400px;
     padding: 10px var(--space-3);
@@ -2872,7 +2888,12 @@ textarea {
         width: 36px;
     }
 
-    .app-footer {
+    /* Inside a vault the footer would take list space; the picker and unlock keep it. */
+    .app:has(.database-view) {
+        --footer-height: 0px;
+    }
+
+    .app:has(.database-view) .app-footer {
         display: none;
     }
 
