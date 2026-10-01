@@ -149,9 +149,10 @@ fn Header() -> impl IntoView {
                         class="btn btn-secondary btn-lock"
                         on:click=move |_| state.request_departure(Departure::Close)
                         title="Close this vault and open another"
+                        aria-label="Close vault"
                     >
-                        <svg viewBox="0 0 24 24" width="16" height="16">
-                            <path fill="currentColor" d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                            <path fill="currentColor" d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59ZM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5a2 2 0 0 0-2-2Z"/>
                         </svg>
                         "Close"
                     </button>
@@ -159,6 +160,7 @@ fn Header() -> impl IntoView {
                         class="btn btn-secondary btn-lock"
                         on:click=move |_| state.request_departure(Departure::Lock)
                         title="Lock database"
+                        aria-label="Lock vault"
                     >
                         <svg viewBox="0 0 24 24" width="16" height="16">
                             <path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
