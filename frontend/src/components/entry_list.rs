@@ -7,6 +7,7 @@ use crate::app::GroupsDrawer;
 use crate::components::icons::KeepassIcon;
 use crate::model::{self, USER_NAME};
 use crate::state::{AppState, EntryEditor};
+use keeweb_wasm::document::GroupView;
 
 /// What a list row shows. Used as the `<For>` key so edits re-render the row.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -14,6 +15,8 @@ struct EntryRow {
     uuid: Uuid,
     title: String,
     username: String,
+    /// Group path below the root, empty for entries in the root group.
+    path: String,
     icon_id: u32,
     custom_icon: Option<Uuid>,
 }
@@ -24,17 +27,20 @@ pub fn EntryList() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let rows = create_memo(move |_| {
-        state
-            .filtered_entries()
-            .iter()
-            .map(|entry| EntryRow {
-                uuid: entry.uuid,
-                title: model::display_title(entry),
-                username: model::field(entry, USER_NAME).to_string(),
-                icon_id: entry.icon_id,
-                custom_icon: entry.custom_icon,
-            })
-            .collect::<Vec<_>>()
+        state.groups.with(|groups| {
+            state
+                .filtered_entries()
+                .iter()
+                .map(|entry| EntryRow {
+                    uuid: entry.uuid,
+                    title: model::display_title(entry),
+                    username: model::field(entry, USER_NAME).to_string(),
+                    path: location(groups, entry.group),
+                    icon_id: entry.icon_id,
+                    custom_icon: entry.custom_icon,
+                })
+                .collect::<Vec<_>>()
+        })
     });
     let total = create_memo(move |_| {
         state
@@ -173,7 +179,24 @@ fn EntryListItem(row: EntryRow) -> impl IntoView {
                         view! { <span class="no-username">"No username"</span> }.into_view()
                     }}
                 </div>
+                {(!row.path.is_empty()).then(|| view! {
+                    <div class="entry-path" title=row.path.clone()>
+                        <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+                            <path fill="currentColor" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                        </svg>
+                        <span>{row.path.clone()}</span>
+                    </div>
+                })}
             </div>
         </div>
+    }
+}
+
+/// Group path without the root group name, which every entry shares.
+fn location(groups: &[GroupView], group: Uuid) -> String {
+    let path = model::group_path(groups, group);
+    match path.split_once(" / ") {
+        Some((_, below_root)) => below_root.to_string(),
+        None => String::new(),
     }
 }

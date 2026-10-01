@@ -48,6 +48,13 @@ pub fn Sidebar() -> impl IntoView {
             .and_then(|uuid| state.group(uuid))
     };
     let is_root = move |group: &GroupView| group.parent.is_none();
+    let located = create_memo(move |_| {
+        let entry = state.selected_entry.get()?;
+        state
+            .entries
+            .with(|entries| entries.iter().find(|e| e.uuid == entry).map(|e| e.group))
+    });
+    provide_context(LocatedGroup(located));
 
     view! {
         <aside class="sidebar">
@@ -244,6 +251,10 @@ fn AllEntriesItem() -> impl IntoView {
     }
 }
 
+/// Group that holds the entry open in the detail panel.
+#[derive(Clone, Copy)]
+struct LocatedGroup(Memo<Option<Uuid>>);
+
 /// A group and its children
 #[component]
 fn GroupTreeNode(
@@ -259,6 +270,18 @@ fn GroupTreeNode(
         .cloned()
         .collect();
     let indent = format!("padding-left: {}rem", depth as f32 + 0.5);
+    let located = expect_context::<LocatedGroup>().0;
+    let is_located = move || located.get() == Some(uuid);
+    let item_ref = create_node_ref::<html::Div>();
+    create_effect(move |_| {
+        if is_located() {
+            if let Some(item) = item_ref.get() {
+                let options = web_sys::ScrollIntoViewOptions::new();
+                options.set_block(web_sys::ScrollLogicalPosition::Nearest);
+                item.scroll_into_view_with_scroll_into_view_options(&options);
+            }
+        }
+    });
     let is_selected =
         move || state.selected_group.get() == Some(uuid) && state.selected_tag.get().is_none();
 
@@ -266,6 +289,8 @@ fn GroupTreeNode(
         <div class="group-node">
             <div
                 class="group-item"
+                class:located=is_located
+                node_ref=item_ref
                 class:selected=is_selected
                 class:recycle-bin=group.is_recycle_bin
                 style=indent
