@@ -59,7 +59,11 @@
           [server]
           host = "127.0.0.1"
           port = 8081
-          cors_origin = "https://keepass.johnrinehart.dev"
+          cors_origins = [
+            "https://keepass.johnrinehart.dev",
+            "https://keepass.mycelium.nebula.johnrinehart.dev",
+            "https://keepass.mycelium.internal",
+          ]
           argon2_enabled = true
 
           [syncthing]

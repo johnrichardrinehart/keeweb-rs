@@ -23,7 +23,7 @@ pub struct ServerConfig {
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
     #[serde(default)]
-    pub cors_origin: Option<String>,
+    pub cors_origins: Vec<String>,
     #[serde(default = "default_true")]
     pub argon2_enabled: bool,
 }
@@ -73,7 +73,7 @@ impl Default for ServerConfig {
             port: default_port(),
             tls_cert: None,
             tls_key: None,
-            cors_origin: None,
+            cors_origins: Vec::new(),
             argon2_enabled: true,
         }
     }
@@ -164,5 +164,32 @@ mod dirs {
         {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn parses_multiple_cors_origins() {
+        let config: Config = toml::from_str(
+            r#"
+            [server]
+            cors_origins = [
+              "https://keepass.johnrinehart.dev",
+              "https://keepass.mycelium.nebula.johnrinehart.dev",
+            ]
+            "#,
+        )
+        .expect("valid server configuration");
+
+        assert_eq!(
+            config.server.cors_origins,
+            [
+                "https://keepass.johnrinehart.dev",
+                "https://keepass.mycelium.nebula.johnrinehart.dev",
+            ]
+        );
     }
 }

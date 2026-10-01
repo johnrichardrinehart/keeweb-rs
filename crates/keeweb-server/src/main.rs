@@ -18,7 +18,7 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -66,11 +66,16 @@ async fn main() -> anyhow::Result<()> {
         app = app.route("/api/argon2", post(routes::argon2::compute_argon2));
     }
     let mut app = app.with_state(state).layer(TraceLayer::new_for_http());
-    if let Some(origin) = &config.server.cors_origin {
-        let origin = HeaderValue::from_str(origin)?;
+    if !config.server.cors_origins.is_empty() {
+        let origins = config
+            .server
+            .cors_origins
+            .iter()
+            .map(|origin| HeaderValue::from_str(origin))
+            .collect::<Result<Vec<_>, _>>()?;
         app = app.layer(
             CorsLayer::new()
-                .allow_origin(origin)
+                .allow_origin(AllowOrigin::list(origins))
                 .allow_methods(Any)
                 .allow_headers(Any)
                 .expose_headers([ETAG]),
