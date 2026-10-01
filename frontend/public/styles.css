@@ -81,7 +81,7 @@ html,
 body {
     height: 100%;
     font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    font-size: 14px;
+    font-size: 17px;
     line-height: 1.5;
     background: var(--color-bg);
     color: var(--color-text);
@@ -331,7 +331,7 @@ input {
 
 .picker-column {
     display: grid;
-    width: min(560px, 100%);
+    width: min(680px, 100%);
     margin: 0 auto;
     gap: 1rem;
 }
