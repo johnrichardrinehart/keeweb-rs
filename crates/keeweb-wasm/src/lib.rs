@@ -136,15 +136,28 @@ impl WasmKdfParams {
     }
 }
 
-/// Composite key of a password-only database: SHA-256(SHA-256(password)).
-pub fn composite_key(password: &str) -> Key {
-    Zeroizing::new(kdbx_core::compute_composite_key(password))
+/// Composite key from an optional password and optional key-file contents.
+pub fn composite_key(password: Option<&str>, key_file: Option<&[u8]>) -> Result<Key, String> {
+    kdbx_core::compute_composite_key_with_key_file(password, key_file)
+        .map(Zeroizing::new)
+        .map_err(|error| error.to_string())
 }
 
-/// Composite key of a password-only database, as input for an external Argon2.
+/// Composite key from an optional password and optional key-file contents, as input
+/// for an external Argon2.
 #[wasm_bindgen(js_name = compositeKey)]
-pub fn composite_key_js(password: &str) -> Vec<u8> {
-    composite_key(password).to_vec()
+pub fn composite_key_js(
+    password: Option<String>,
+    key_file: Option<Vec<u8>>,
+) -> Result<Vec<u8>, JsValue> {
+    let password = password.map(Zeroizing::new);
+    let key_file = key_file.map(Zeroizing::new);
+    composite_key(
+        password.as_ref().map(|password| password.as_str()),
+        key_file.as_ref().map(|key_file| key_file.as_slice()),
+    )
+    .map(|key| key.to_vec())
+    .map_err(js_error)
 }
 
 /// Runs Argon2 with the file's parameters in this thread. This is the slow fallback
@@ -200,7 +213,8 @@ struct SessionKeys {
 ///
 /// The keys never leave this object except through [`WasmDocument::composite_key`],
 /// which exists so that another revision of the same file (possibly re-salted) can be
-/// derived with the same password.
+/// derived with the same credentials, and [`WasmDocument::transformed_key`], which
+/// exists for device-bound quick unlock.
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct WasmDocument {
@@ -244,6 +258,11 @@ impl WasmDocument {
 
     pub fn composite_key(&self) -> &[u8; 32] {
         &self.keys.composite
+    }
+
+    /// The transformed key of this session; exists for device-bound quick unlock.
+    pub fn transformed_key(&self) -> &[u8; 32] {
+        &self.keys.transformed
     }
 
     pub fn apply(&mut self, change: Change) -> Result<ChangeOutcome, String> {

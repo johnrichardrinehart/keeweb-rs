@@ -16,8 +16,9 @@ pub use entry::{Entry, EntryBuilder};
 pub use error::{Error, Result};
 pub use group::Group;
 pub use kdbx4_decrypt::{
-    Kdbx4Header, KdfParams, KdfType, compute_composite_key, decrypt_kdbx4_full,
-    decrypt_kdbx4_full_with_password, decrypt_kdbx4_with_key, parse_kdbx4_header,
+    Kdbx4Header, KdfParams, KdfType, compute_composite_key, compute_composite_key_with_key_file,
+    decrypt_kdbx4_full, decrypt_kdbx4_full_with_password, decrypt_kdbx4_with_key, key_file_key,
+    parse_kdbx4_header,
 };
 pub use totp::{TotpAlgorithm, TotpConfig, TotpError};
 

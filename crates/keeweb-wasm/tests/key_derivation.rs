@@ -45,7 +45,7 @@ fn written_by_keepass(argon2id: bool) -> Vec<u8> {
 
 fn unlock(data: &[u8], password: &str) -> Result<WasmDocument, String> {
     let params = WasmDocument::kdf_params(data)?;
-    let composite = composite_key(password);
+    let composite = composite_key(Some(password), None)?;
     let transformed = derive_transformed_key(params.params(), &composite)?;
     WasmDocument::open(data, &composite, &transformed)
 }

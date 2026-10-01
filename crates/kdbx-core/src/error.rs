@@ -20,6 +20,10 @@ pub enum Error {
     #[error("Invalid credentials: incorrect password or key file")]
     InvalidCredentials,
 
+    /// The password and key file cannot form a composite key
+    #[error("{0}")]
+    InvalidKey(String),
+
     /// Database is locked and requires unlocking
     #[error("Database is locked")]
     DatabaseLocked,

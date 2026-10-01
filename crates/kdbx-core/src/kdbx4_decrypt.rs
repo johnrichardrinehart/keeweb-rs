@@ -14,6 +14,7 @@ use flate2::read::GzDecoder;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256, Sha512};
 use std::io::Read;
+use zeroize::Zeroizing;
 
 type HmacSha256 = Hmac<Sha256>;
 type Aes256Cbc = cbc::Decryptor<Aes256>;
@@ -479,11 +480,188 @@ pub(crate) fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
 
 /// Get the composite key from a password (for Argon2 input)
 pub fn compute_composite_key(password: &str) -> [u8; 32] {
-    let password_hash = Sha256::digest(password.as_bytes());
-    let composite_key = Sha256::digest(password_hash);
-    let mut result = [0u8; 32];
-    result.copy_from_slice(&composite_key);
-    result
+    composite_of(Some(password), None)
+}
+
+/// SHA-256(SHA-256(password) || key_file_key(key_file)); either part optional, at least one required.
+pub fn compute_composite_key_with_key_file(
+    password: Option<&str>,
+    key_file: Option<&[u8]>,
+) -> Result<[u8; 32]> {
+    if password.is_none() && key_file.is_none() {
+        return Err(Error::InvalidKey(
+            "A password or a key file is required".to_string(),
+        ));
+    }
+    let key_file_key = key_file.map(key_file_key).transpose()?;
+    Ok(composite_of(
+        password,
+        key_file_key.as_ref().map(|key| key.as_slice()),
+    ))
+}
+
+fn composite_of(password: Option<&str>, key_file_key: Option<&[u8]>) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    if let Some(password) = password {
+        let password_hash = Zeroizing::new(<[u8; 32]>::from(Sha256::digest(password.as_bytes())));
+        hasher.update(password_hash.as_slice());
+    }
+    if let Some(key) = key_file_key {
+        hasher.update(key);
+    }
+    hasher.finalize().into()
+}
+
+/// The 32-or-more-byte key-file component (KeePass KcpKeyFile semantics).
+pub fn key_file_key(data: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+    let without_bom = data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data);
+    if let Some(key) = xml_key_file_key(without_bom)? {
+        return Ok(key);
+    }
+    if data.len() == 32 {
+        return Ok(Zeroizing::new(data.to_vec()));
+    }
+    if data.len() == 64 {
+        if let Some(key) = decode_hex(data) {
+            return Ok(key);
+        }
+    }
+    Ok(Zeroizing::new(Sha256::digest(data).to_vec()))
+}
+
+const KEY_FILE_VERSION: [&[u8]; 3] = [b"KeyFile", b"Meta", b"Version"];
+const KEY_FILE_DATA: [&[u8]; 3] = [b"KeyFile", b"Key", b"Data"];
+
+fn damaged_key_file(problem: &str) -> Error {
+    Error::InvalidKey(format!("The key file is damaged: {problem}"))
+}
+
+/// Key data of a KeePass XML key file. `None` when `data` is not a well-formed XML
+/// document with a `KeyFile` root; such files are key material as a whole.
+fn xml_key_file_key(data: &[u8]) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    let mut reader = Reader::from_reader(data);
+    let mut path: Vec<Vec<u8>> = Vec::new();
+    let mut saw_root = false;
+    let mut version = String::new();
+    let mut hash: Option<String> = None;
+    let mut key_data: Option<Zeroizing<String>> = None;
+
+    loop {
+        let Ok(event) = reader.read_event() else {
+            return Ok(None);
+        };
+        let empty = matches!(event, Event::Empty(_));
+        match event {
+            Event::Start(start) | Event::Empty(start) => {
+                if path.is_empty() {
+                    if saw_root || start.name().as_ref() != b"KeyFile" {
+                        return Ok(None);
+                    }
+                    saw_root = true;
+                }
+                path.push(start.name().as_ref().to_vec());
+                if path == KEY_FILE_DATA {
+                    for attr in start.attributes() {
+                        let Ok(attr) = attr else {
+                            return Ok(None);
+                        };
+                        if attr.key.as_ref() == b"Hash" {
+                            let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) else {
+                                return Ok(None);
+                            };
+                            hash = Some(value.into_owned());
+                        }
+                    }
+                    key_data.get_or_insert_with(Default::default);
+                }
+                if empty {
+                    path.pop();
+                }
+            }
+            Event::End(_) => {
+                path.pop();
+            }
+            Event::Text(text) => {
+                let Ok(text) = text.decode() else {
+                    return Ok(None);
+                };
+                if path.is_empty() {
+                    if !text.trim().is_empty() {
+                        return Ok(None);
+                    }
+                } else if path == KEY_FILE_VERSION {
+                    version.push_str(&text);
+                } else if path == KEY_FILE_DATA {
+                    if let Some(key_data) = key_data.as_mut() {
+                        key_data.push_str(&text);
+                    }
+                }
+            }
+            // Neither hex, base64 nor a version number needs escaping or CDATA.
+            Event::GeneralRef(_) | Event::CData(_)
+                if path == KEY_FILE_DATA || path == KEY_FILE_VERSION =>
+            {
+                return Err(damaged_key_file("it contains unexpected characters"));
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !saw_root || !path.is_empty() {
+        return Ok(None);
+    }
+
+    let key_data = key_data.ok_or_else(|| damaged_key_file("it contains no key data"))?;
+    let key = match version.trim() {
+        "2.0" | "2.00" => {
+            let digits: Zeroizing<Vec<u8>> = Zeroizing::new(
+                key_data
+                    .bytes()
+                    .filter(|byte| !byte.is_ascii_whitespace())
+                    .collect(),
+            );
+            let key = decode_hex(&digits)
+                .ok_or_else(|| damaged_key_file("its key data is not hexadecimal"))?;
+            if let Some(hash) = hash {
+                let digest = Sha256::digest(key.as_slice());
+                let matches = decode_hex(hash.trim().as_bytes())
+                    .is_some_and(|expected| expected.as_slice() == &digest[..4]);
+                if !matches {
+                    return Err(damaged_key_file("its hash does not match"));
+                }
+            }
+            key
+        }
+        "1.0" | "1.00" => Zeroizing::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(key_data.trim())
+                .map_err(|_| damaged_key_file("its key data is not base64"))?,
+        ),
+        _ => {
+            return Err(Error::InvalidKey(
+                "The key file version is not supported".to_string(),
+            ));
+        }
+    };
+    if key.is_empty() {
+        return Err(damaged_key_file("it contains no key data"));
+    }
+    Ok(Some(key))
+}
+
+fn decode_hex(text: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    let nibble = |byte: u8| char::from(byte).to_digit(16).map(|digit| digit as u8);
+    let mut bytes = Zeroizing::new(Vec::with_capacity(text.len() / 2));
+    for pair in text.chunks_exact(2) {
+        bytes.push(nibble(pair[0])? << 4 | nibble(pair[1])?);
+    }
+    Some(bytes)
 }
 
 /// Inner header parsed from decrypted payload
@@ -856,4 +1034,242 @@ pub fn decrypt_kdbx4_full(
     let decrypted_xml = decrypt_protected_values(&xml, &inner_header.stream_key)?;
 
     Ok(decrypted_xml)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::KdbxDocument;
+    use keepass::config::{DatabaseConfig, KdfConfig};
+    use keepass::db::{Entry, Value};
+    use keepass::{Database, DatabaseKey};
+
+    const PASSWORD: &str = "correct horse battery staple";
+
+    const KEY: [u8; 32] = [
+        0x36, 0x05, 0x7B, 0x1C, 0x35, 0x03, 0x7F, 0xD9, 0x62, 0x25, 0x78, 0x93, 0xC0, 0xA2, 0x24,
+        0x03, 0xEE, 0x3F, 0x8F, 0xBB, 0x50, 0x4D, 0x99, 0x81, 0x08, 0xB8, 0x21, 0xCB, 0x00, 0xD2,
+        0x8F, 0x89,
+    ];
+
+    // Hash is the first 4 bytes of SHA-256(KEY), precomputed with sha256sum. The
+    // fixtures avoid tabs and whitespace around base64 because the keepass crate, used
+    // as the reference writer below, does not strip them.
+    const XML_V2: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<KeyFile>
+    <Meta>
+        <Version>2.0</Version>
+    </Meta>
+    <Key>
+        <Data Hash="A65F0C2D">
+            36057B1C 35037FD9 62257893 C0A22403
+            EE3F8FBB 504D9981 08B821CB 00D28F89
+        </Data>
+    </Key>
+</KeyFile>
+"#;
+
+    const XML_V1: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<KeyFile>
+    <Meta>
+        <Version>1.00</Version>
+    </Meta>
+    <Key>
+        <Data>NgV7HDUDf9liJXiTwKIkA+4/j7tQTZmBCLghywDSj4k=</Data>
+    </Key>
+</KeyFile>
+"#;
+
+    /// Test-only hex parser, independent of the code under test.
+    fn hex(text: &str) -> Vec<u8> {
+        (0..text.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    fn key_of(data: &[u8]) -> Vec<u8> {
+        key_file_key(data).unwrap().to_vec()
+    }
+
+    #[test]
+    fn xml_v2_key_file_yields_its_verified_data() {
+        assert_eq!(key_of(XML_V2.as_bytes()), KEY);
+        let lowercase_hash = XML_V2.replace("A65F0C2D", "a65f0c2d");
+        assert_eq!(key_of(lowercase_hash.as_bytes()), KEY);
+        let without_hash = XML_V2.replace(r#" Hash="A65F0C2D""#, "");
+        assert_eq!(key_of(without_hash.as_bytes()), KEY);
+        let tab_indented = XML_V2.replace("    ", "\t").replace('\n', "\r\n");
+        assert_eq!(key_of(tab_indented.as_bytes()), KEY);
+    }
+
+    #[test]
+    fn xml_v2_key_file_with_wrong_hash_is_rejected() {
+        let wrong = XML_V2.replace("A65F0C2D", "A65F0C2E");
+        let error = key_file_key(wrong.as_bytes()).unwrap_err().to_string();
+        assert_eq!(error, "The key file is damaged: its hash does not match");
+
+        let tampered = XML_V2.replace("00D28F89", "00D28F88");
+        assert!(key_file_key(tampered.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn xml_key_file_with_bad_version_or_data_is_rejected() {
+        let future = XML_V2.replace("<Version>2.0</Version>", "<Version>3.0</Version>");
+        assert_eq!(
+            key_file_key(future.as_bytes()).unwrap_err().to_string(),
+            "The key file version is not supported"
+        );
+        let not_hex = XML_V2.replace("36057B1C", "36057B1G");
+        assert!(key_file_key(not_hex.as_bytes()).is_err());
+        let not_base64 = XML_V1.replace("NgV7", "Ng!7");
+        assert!(key_file_key(not_base64.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn xml_v1_key_file_yields_base64_data() {
+        assert_eq!(key_of(XML_V1.as_bytes()), KEY);
+        let padded = XML_V1
+            .replace("<Data>", "<Data>\n\t\t")
+            .replace("</Data>", "\n\t</Data>");
+        assert_eq!(key_of(padded.as_bytes()), KEY);
+    }
+
+    #[test]
+    fn bom_prefixed_xml_key_file_is_recognized() {
+        let with_bom = format!("\u{feff}{XML_V2}");
+        assert_eq!(key_of(with_bom.as_bytes()), KEY);
+    }
+
+    #[test]
+    fn binary_32_byte_key_file_is_used_raw() {
+        assert_eq!(key_of(&KEY), KEY);
+    }
+
+    #[test]
+    fn hex_64_char_key_file_is_decoded() {
+        let upper = "36057B1C35037FD962257893C0A22403EE3F8FBB504D998108B821CB00D28F89";
+        assert_eq!(key_of(upper.as_bytes()), KEY);
+        assert_eq!(key_of(upper.to_lowercase().as_bytes()), KEY);
+    }
+
+    #[test]
+    fn other_key_files_are_hashed_whole() {
+        assert_eq!(
+            key_of(b"arbitrary key file contents\n"),
+            hex("7229fb6ee6f4d9f993514a9e5019812fde25be00ca67163f56325bd88b79a27f")
+        );
+        assert_eq!(
+            key_of(b""),
+            hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        );
+        // 64 bytes that are not all hex digits, and XML that is not a key file.
+        let not_hex = [b'g'; 64];
+        assert_eq!(key_of(&not_hex), Sha256::digest(not_hex).to_vec());
+        let other_xml = b"<Not><KeyFile/></Not>";
+        assert_eq!(key_of(other_xml), Sha256::digest(other_xml).to_vec());
+    }
+
+    #[test]
+    fn composite_key_combines_password_and_key_file() {
+        let both = compute_composite_key_with_key_file(Some(PASSWORD), Some(XML_V2.as_bytes()));
+        assert_eq!(
+            both.unwrap().to_vec(),
+            hex("6f3e6e6828cda57e4118884b8a6bb982b68a3afbcace3eeac8dc5909065587ad")
+        );
+
+        let key_file_only = compute_composite_key_with_key_file(None, Some(XML_V2.as_bytes()));
+        assert_eq!(
+            key_file_only.unwrap().to_vec(),
+            hex("a65f0c2d028c10bac56822728026ab4fb6556d30f279b2cca53d7ded45dff658")
+        );
+
+        let password_only = compute_composite_key_with_key_file(Some(PASSWORD), None);
+        assert_eq!(password_only.unwrap(), compute_composite_key(PASSWORD));
+
+        assert!(compute_composite_key_with_key_file(None, None).is_err());
+    }
+
+    fn written_by_keepass(key: DatabaseKey) -> Vec<u8> {
+        let mut config = DatabaseConfig::default();
+        config.kdf_config = match config.kdf_config {
+            KdfConfig::Argon2 { version, .. } | KdfConfig::Argon2id { version, .. } => {
+                KdfConfig::Argon2 {
+                    iterations: 1,
+                    memory: 64 * 1024,
+                    parallelism: 1,
+                    version,
+                }
+            }
+            other => other,
+        };
+        let mut db = Database::new(config);
+        let mut entry = Entry::new();
+        entry
+            .fields
+            .insert("Title".to_string(), Value::Unprotected("Mail".to_string()));
+        db.root.add_child(entry);
+        let mut written = Vec::new();
+        db.save(&mut written, key).unwrap();
+        written
+    }
+
+    fn open(data: &[u8], password: Option<&str>, key_file: Option<&[u8]>) -> Result<Vec<String>> {
+        let params = KdbxDocument::kdf_request(data)?;
+        let composite = compute_composite_key_with_key_file(password, key_file)?;
+        let algorithm = match params.kdf_type {
+            KdfType::Argon2d => argon2::Algorithm::Argon2d,
+            KdfType::Argon2id => argon2::Algorithm::Argon2id,
+        };
+        let argon_params = argon2::Params::new(
+            params.memory_kb as u32,
+            params.iterations as u32,
+            params.parallelism,
+            Some(32),
+        )
+        .unwrap();
+        let mut transformed = [0u8; 32];
+        argon2::Argon2::new(algorithm, argon2::Version::V0x13, argon_params)
+            .hash_password_into(&composite, &params.salt, &mut transformed)
+            .unwrap();
+        let document = KdbxDocument::open(data, &composite, &transformed)?;
+        Ok(document
+            .entries()
+            .iter()
+            .map(|entry| entry.title().to_string())
+            .collect())
+    }
+
+    #[test]
+    fn opens_keepass_database_protected_by_password_and_key_file() {
+        let key = DatabaseKey::new()
+            .with_password(PASSWORD)
+            .with_keyfile(&mut XML_V2.as_bytes())
+            .unwrap();
+        let data = written_by_keepass(key);
+
+        let titles = open(&data, Some(PASSWORD), Some(XML_V2.as_bytes())).unwrap();
+        assert_eq!(titles, ["Mail"]);
+        assert!(open(&data, Some(PASSWORD), None).is_err());
+        assert!(open(&data, None, Some(XML_V2.as_bytes())).is_err());
+    }
+
+    #[test]
+    fn opens_keepass_database_protected_by_key_file_only() {
+        let arbitrary: &[u8] = b"arbitrary key file contents\n";
+        for key_file in [XML_V2.as_bytes(), XML_V1.as_bytes(), &KEY, arbitrary] {
+            let key = DatabaseKey::new().with_keyfile(&mut &key_file[..]).unwrap();
+            let data = written_by_keepass(key);
+
+            let titles = open(&data, None, Some(key_file)).unwrap();
+            assert_eq!(titles, ["Mail"]);
+            assert!(open(&data, Some(PASSWORD), Some(key_file)).is_err());
+        }
+        let data = written_by_keepass(
+            DatabaseKey::new()
+                .with_keyfile(&mut XML_V2.as_bytes())
+                .unwrap(),
+        );
+        assert!(open(&data, None, Some(arbitrary)).is_err());
+    }
 }
