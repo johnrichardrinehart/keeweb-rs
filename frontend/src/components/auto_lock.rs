@@ -58,12 +58,12 @@ pub fn AutoLock() -> impl IntoView {
                         move || {
                             let current = countdown_seconds.get_untracked();
                             if current <= 1 {
-                                // Time's up - lock the database
+                                // Time's up: save unsaved changes, then lock
                                 if let Some(timer_id) = countdown_timer.get_value() {
                                     clear_interval(timer_id);
                                 }
                                 show_warning.set(false);
-                                state.close_database();
+                                spawn_local(state.auto_lock());
                             } else {
                                 countdown_seconds.set(current - 1);
                             }
@@ -158,6 +158,9 @@ pub fn AutoLock() -> impl IntoView {
                         {move || countdown_seconds.get()}
                     </div>
                     <p class="auto-lock-unit">"seconds"</p>
+                    <Show when=move || state.is_dirty()>
+                        <p class="auto-lock-message">"Unsaved changes will be saved first."</p>
+                    </Show>
                     <button
                         class="btn btn-primary auto-lock-button"
                         on:click=keep_alive

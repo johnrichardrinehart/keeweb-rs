@@ -1,17 +1,55 @@
 //! Entry list component
 
 use leptos::*;
+use uuid::Uuid;
 
-use crate::state::AppState;
+use crate::components::icons::KeepassIcon;
+use crate::model::{self, USER_NAME};
+use crate::state::{AppState, EntryEditor};
+
+/// What a list row shows. Used as the `<For>` key so edits re-render the row.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct EntryRow {
+    uuid: Uuid,
+    title: String,
+    username: String,
+    icon_id: u32,
+    custom_icon: Option<Uuid>,
+}
 
 /// Entry list component
 #[component]
 pub fn EntryList() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    // Search input handler
+    let rows = create_memo(move |_| {
+        state
+            .filtered_entries()
+            .iter()
+            .map(|entry| EntryRow {
+                uuid: entry.uuid,
+                title: model::display_title(entry),
+                username: model::field(entry, USER_NAME).to_string(),
+                icon_id: entry.icon_id,
+                custom_icon: entry.custom_icon,
+            })
+            .collect::<Vec<_>>()
+    });
+    let total = create_memo(move |_| {
+        state
+            .entries
+            .with(|entries| entries.iter().filter(|entry| !entry.in_recycle_bin).count())
+    });
+
     let on_search = move |ev| {
         state.search_query.set(event_target_value(&ev));
+    };
+
+    let new_entry = move |_| {
+        if let Some(group) = state.target_group() {
+            state.selected_entry.set(None);
+            state.editor.set(Some(EntryEditor::Create { group }));
+        }
     };
 
     view! {
@@ -31,12 +69,12 @@ pub fn EntryList() -> impl IntoView {
                 </div>
                 <span class="entry-count">
                     {move || {
-                        let total = state.entries.get().len();
-                        let filtered = state.filtered_entries().len();
-                        if total == filtered {
-                            format!("{} entries", total)
+                        let shown = rows.with(Vec::len);
+                        let total = total.get();
+                        if shown == total {
+                            format!("{total} entries")
                         } else {
-                            format!("{} of {} entries", filtered, total)
+                            format!("{shown} of {total} entries")
                         }
                     }}
                 </span>
@@ -44,7 +82,7 @@ pub fn EntryList() -> impl IntoView {
 
             <div class="entry-list-items">
                 <Show
-                    when=move || !state.filtered_entries().is_empty()
+                    when=move || rows.with(|rows| !rows.is_empty())
                     fallback=|| view! {
                         <div class="empty-state">
                             <p>"No entries found"</p>
@@ -52,31 +90,19 @@ pub fn EntryList() -> impl IntoView {
                     }
                 >
                     <For
-                        each=move || state.filtered_entries()
-                        key=|entry| entry.uuid.clone()
-                        children=move |entry| {
-                            let uuid = entry.uuid.clone();
-                            let title = entry.title.clone();
-                            let username = entry.username.clone();
-                            let icon_id = entry.icon_id;
-                            let icon_letter = title.chars().next().unwrap_or('?').to_uppercase().to_string();
-
-                            view! {
-                                <EntryListItem
-                                    uuid=uuid
-                                    title=title
-                                    username=username
-                                    icon_id=icon_id
-                                    icon_letter=icon_letter
-                                />
-                            }
-                        }
+                        each=move || rows.get()
+                        key=|row| row.clone()
+                        children=move |row| view! { <EntryListItem row=row /> }
                     />
                 </Show>
             </div>
 
             <div class="entry-list-footer">
-                <button class="btn btn-primary btn-small" disabled=true title="Coming soon">
+                <button
+                    class="btn btn-primary btn-small"
+                    disabled=move || state.saving.get() || state.groups.with(|groups| groups.is_empty())
+                    on:click=new_entry
+                >
                     "+ New Entry"
                 </button>
             </div>
@@ -86,55 +112,39 @@ pub fn EntryList() -> impl IntoView {
 
 /// A single entry in the list
 #[component]
-fn EntryListItem(
-    uuid: String,
-    title: String,
-    username: String,
-    icon_id: Option<u32>,
-    icon_letter: String,
-) -> impl IntoView {
+fn EntryListItem(row: EntryRow) -> impl IntoView {
     let state = expect_context::<AppState>();
-    let uuid_for_selected = uuid.clone();
-    let uuid_for_click = uuid.clone();
-    let has_username = !username.is_empty();
-
-    // Get icon display - either standard KeePass icon or fallback to letter
-    let icon_display = get_standard_icon(icon_id, &icon_letter);
-
+    let uuid = row.uuid;
+    let has_username = !row.username.is_empty();
+    let letter = row
+        .title
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
     view! {
         <div
             class="entry-item"
-            class:selected=move || state.selected_entry.get().as_ref() == Some(&uuid_for_selected)
-            on:click=move |_| state.selected_entry.set(Some(uuid_for_click.clone()))
+            class:selected=move || state.selected_entry.get() == Some(uuid)
+            on:click=move |_| {
+                state.editor.set(None);
+                state.selected_entry.set(Some(uuid));
+            }
         >
-            <div class="entry-icon" inner_html=icon_display></div>
+            <div class="entry-icon">
+                <KeepassIcon icon_id=row.icon_id custom_icon=row.custom_icon fallback=letter />
+            </div>
             <div class="entry-info">
-                <div class="entry-title">{title}</div>
+                <div class="entry-title">{row.title}</div>
                 <div class="entry-username">
                     {if has_username {
-                        view! { <span>{username}</span> }.into_view()
+                        view! { <span>{row.username}</span> }.into_view()
                     } else {
                         view! { <span class="no-username">"No username"</span> }.into_view()
                     }}
                 </div>
             </div>
         </div>
-    }
-}
-
-/// Get the display content for a standard KeePass icon
-/// Uses vendored KeePassXC SVG icons from /icons/database/{id}.svg
-/// Falls back to first letter of title if icon file doesn't exist
-fn get_standard_icon(icon_id: Option<u32>, fallback: &str) -> String {
-    match icon_id {
-        Some(id) if id <= 68 => {
-            // Use vendored KeePassXC icon with relative path for subpath deployments
-            format!(
-                r#"<img src="icons/database/{}.svg" alt="icon" width="20" height="20" style="object-fit: contain;">"#,
-                id
-            )
-        }
-        // Fallback to letter for unknown or missing icons
-        _ => fallback.to_string(),
     }
 }

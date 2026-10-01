@@ -31,6 +31,8 @@ web-sys = { version = "0.3", features = [
     "Element",
     "HtmlElement",
     "HtmlInputElement",
+    "HtmlAnchorElement",
+    "BeforeUnloadEvent",
     "HtmlTextAreaElement",
     "Event",
     "DragEvent",
@@ -79,6 +81,12 @@ futures = "0.3"
 
 # UUID handling
 uuid = { version = "1", features = ["v4", "serde", "js"] }
+
+# Dates in the document views
+chrono.workspace = true
+
+# Wiping keys from memory
+zeroize.workspace = true
 
 # Logging
 log = "0.4"

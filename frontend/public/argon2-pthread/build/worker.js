@@ -343,18 +343,7 @@ function hash(params) {
     zeroBytes(passwordData);
     const hashLen = params.hashLen;
     const hashPtr = argon2.malloc(hashLen);
-    console.log('[Argon2] Calling hash with:', {
-        timeCost: params.timeCost,
-        memoryCost: params.memoryCost,
-        threads: params.threads,
-        passwordLen,
-        saltLen,
-        hashLen,
-        passwordFirst4: Array.from(passwordData.slice(0, 4)),
-        saltFirst4: Array.from(params.salt.slice(0, 4))
-    });
     const code = hashfn(params.timeCost, params.memoryCost, params.threads, passwordPtr, passwordLen, saltPtr, saltLen, hashPtr, hashLen);
-    console.log('[Argon2] Hash returned code:', code);
     passwordView = new Uint8Array(argon2.memory.buffer, passwordPtr, passwordLen);
     zeroBytes(passwordView);
     argon2.free(passwordPtr);
@@ -365,7 +354,6 @@ function hash(params) {
     const hash = new Uint8Array(hashLen);
     const hashView = new Uint8Array(argon2.memory.buffer, hashPtr, hashLen);
     memCopy(hash, hashView);
-    console.log('[Argon2] Hash result first 8 bytes:', Array.from(hash.slice(0, 8)));
     zeroBytes(hashView);
     argon2.free(hashPtr);
     return {

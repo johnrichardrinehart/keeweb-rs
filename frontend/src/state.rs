@@ -1,209 +1,19 @@
 //! Application state management
 
-use crate::argon2_client::Argon2Client;
-use crate::helper_client;
-use crate::worker_client::WorkerClient;
-use keeweb_wasm::WasmDatabase;
+use crate::kdf;
+use crate::server::{self, ReplaceError};
+use crate::utils::files;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use keeweb_wasm::WasmDocument;
+use keeweb_wasm::document::{Change, ChangeOutcome, EntryView, GroupView, MetaView};
 use leptos::*;
-use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::rc::Rc;
+use uuid::Uuid;
 use wasm_bindgen_futures::spawn_local;
+use zeroize::Zeroizing;
 
-/// Log timing information only in debug builds
-#[cfg(debug_assertions)]
-macro_rules! debug_timing {
-    ($($arg:tt)*) => {
-        log::info!($($arg)*)
-    };
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! debug_timing {
-    ($($arg:tt)*) => {};
-}
-
-/// Get current performance timestamp
-fn perf_now() -> f64 {
-    web_sys::window()
-        .and_then(|w| w.performance())
-        .map(|p| p.now())
-        .unwrap_or(0.0)
-}
-
-// Thread-local clients (WASM is single-threaded)
-thread_local! {
-    static WORKER_CLIENT: RefCell<Option<WorkerClient>> = const { RefCell::new(None) };
-    static ARGON2_CLIENT: RefCell<Option<Argon2Client>> = const { RefCell::new(None) };
-    static ARGON2_READY: RefCell<bool> = const { RefCell::new(false) };
-}
-
-/// Get or initialize the worker client
-fn get_worker_client() -> Result<(), String> {
-    WORKER_CLIENT.with(|client| {
-        let mut client = client.borrow_mut();
-        if client.is_none() {
-            match WorkerClient::new() {
-                Ok(wc) => {
-                    *client = Some(wc);
-                    Ok(())
-                }
-                Err(e) => Err(format!("Failed to create worker: {:?}", e)),
-            }
-        } else {
-            Ok(())
-        }
-    })
-}
-
-/// Get or initialize the argon2 client
-fn get_argon2_client() -> Result<(), String> {
-    ARGON2_CLIENT.with(|client| {
-        let mut client = client.borrow_mut();
-        if client.is_none() {
-            match Argon2Client::new() {
-                Ok(ac) => {
-                    *client = Some(ac);
-                    Ok(())
-                }
-                Err(e) => Err(format!("Failed to create argon2 client: {:?}", e)),
-            }
-        } else {
-            Ok(())
-        }
-    })
-}
-
-/// Initialize argon2 worker (call once at startup)
-pub fn init_argon2<F>(callback: F)
-where
-    F: FnOnce(Result<(), String>) + 'static,
-{
-    if let Err(e) = get_argon2_client() {
-        callback(Err(e));
-        return;
-    }
-
-    ARGON2_CLIENT.with(|client| {
-        if let Some(ref ac) = *client.borrow() {
-            ac.init(move |result| {
-                if result.is_ok() {
-                    ARGON2_READY.with(|ready| *ready.borrow_mut() = true);
-                }
-                callback(result);
-            });
-        }
-    });
-}
-
-/// Check if argon2 is ready
-pub fn is_argon2_ready() -> bool {
-    ARGON2_READY.with(|ready| *ready.borrow())
-}
-
-/// Run argon2 hash with parallel threads using argon2-pthread worker
-#[allow(clippy::too_many_arguments)]
-pub fn argon2_hash<F>(
-    argon2_type: String,
-    password: Vec<u8>,
-    salt: Vec<u8>,
-    time_cost: u32,
-    memory_cost: u32,
-    threads: u32,
-    hash_len: u32,
-    callback: F,
-) where
-    F: FnOnce(Result<Vec<u8>, String>) + 'static,
-{
-    ARGON2_CLIENT.with(|client| {
-        if let Some(ref ac) = *client.borrow() {
-            ac.hash(
-                &argon2_type,
-                password,
-                salt,
-                time_cost,
-                memory_cost,
-                threads,
-                hash_len,
-                callback,
-            );
-        } else {
-            callback(Err("Argon2 client not initialized".to_string()));
-        }
-    });
-}
-
-/// Send unlock request to worker (for decryption only, not KDF)
-pub fn worker_decrypt<F>(data: Vec<u8>, password: String, derived_key: Vec<u8>, callback: F)
-where
-    F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
-{
-    if let Err(e) = get_worker_client() {
-        callback(Err(e));
-        return;
-    }
-
-    WORKER_CLIENT.with(|client| {
-        if let Some(ref wc) = *client.borrow() {
-            wc.decrypt_with_key(data, password, derived_key, callback);
-        }
-    });
-}
-
-/// Send unlock request to worker (uses fast parallel argon2)
-pub fn worker_unlock<F>(data: Vec<u8>, password: String, callback: F)
-where
-    F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
-{
-    if let Err(e) = get_worker_client() {
-        callback(Err(e));
-        return;
-    }
-
-    WORKER_CLIENT.with(|client| {
-        if let Some(ref wc) = *client.borrow() {
-            wc.unlock(data, password, callback);
-        }
-    });
-}
-
-/// Send unlock request to worker using SIMD-only argon2 (no pthreads)
-/// Use this for high-memory databases (>=1GB) where pthread deadlocks
-/// Faster than single-threaded rust-argon2 due to SIMD acceleration
-#[allow(dead_code)]
-pub fn worker_unlock_simd<F>(data: Vec<u8>, password: String, callback: F)
-where
-    F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
-{
-    if let Err(e) = get_worker_client() {
-        callback(Err(e));
-        return;
-    }
-
-    WORKER_CLIENT.with(|client| {
-        if let Some(ref wc) = *client.borrow() {
-            wc.unlock_simd(data, password, callback);
-        }
-    });
-}
-
-/// Send unlock request to worker using standard single-threaded Rust argon2
-/// Slowest option, but most reliable fallback
-pub fn worker_unlock_standard<F>(data: Vec<u8>, password: String, callback: F)
-where
-    F: FnOnce(Result<crate::worker_client::UnlockResult, String>) + 'static,
-{
-    if let Err(e) = get_worker_client() {
-        callback(Err(e));
-        return;
-    }
-
-    WORKER_CLIENT.with(|client| {
-        if let Some(ref wc) = *client.borrow() {
-            wc.unlock_standard(data, password, callback);
-        }
-    });
-}
+/// How many times a save merges with a newer server revision before giving up.
+const MAX_MERGE_ATTEMPTS: usize = 3;
 
 /// Current view/screen of the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -327,113 +137,67 @@ pub fn init_theme(theme: Theme) {
     apply_theme(theme);
 }
 
-/// Source of a database file
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Where a vault came from and where saves go.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatabaseSource {
-    /// Local file (drag-and-drop)
+    /// Opened from disk in a build without server storage. Saving downloads a copy.
     Local { name: String },
-    /// Google Drive
-    GoogleDrive { file_id: String, name: String },
-    /// Dropbox
-    Dropbox { path: String, name: String },
-    /// Box
-    Box { file_id: String, name: String },
-    /// Backend server
-    Backend { path: String, name: String },
+    /// Stored on the keeweb-server. `revision` is the server revision of the bytes the
+    /// session's merge base was read from.
+    Server {
+        id: String,
+        name: String,
+        revision: String,
+    },
 }
 
 impl DatabaseSource {
     pub fn name(&self) -> &str {
         match self {
-            Self::Local { name } => name,
-            Self::GoogleDrive { name, .. } => name,
-            Self::Dropbox { name, .. } => name,
-            Self::Box { name, .. } => name,
-            Self::Backend { name, .. } => name,
+            Self::Local { name } | Self::Server { name, .. } => name,
         }
     }
 }
 
-/// A historical version of an entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryEntryInfo {
-    pub title: String,
-    pub username: String,
-    #[serde(default)]
-    pub password: Option<String>,
+/// An encrypted vault waiting for its password.
+#[derive(Clone)]
+pub struct PendingVault {
+    pub data: Vec<u8>,
+    pub source: DatabaseSource,
+}
+
+/// An unlocked vault.
+struct Session {
+    /// The document with all edits applied.
+    local: WasmDocument,
+    /// The document as last read from or written to the source; the merge base.
+    base: WasmDocument,
+    /// Encrypted bytes of `base`, to unlock again after locking.
+    base_bytes: Vec<u8>,
+    source: DatabaseSource,
+}
+
+/// Leaving the unlocked vault, which discards unsaved changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Departure {
+    /// Close the vault and return to the vault picker.
+    Close,
+    /// Lock the vault and ask for its password again.
+    Lock,
+}
+
+/// What the entry panel is editing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryEditor {
+    Edit(Uuid),
+    Create { group: Uuid },
+}
+
+/// A custom icon ready for `<img src>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IconImage {
+    pub uuid: Uuid,
     pub url: String,
-    pub notes: String,
-    /// Last modification time of this history version
-    pub last_modification_time: Option<String>,
-}
-
-/// File attachment metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttachmentInfo {
-    /// Display name of the attachment
-    pub name: String,
-    /// Reference index to the binary data
-    #[serde(rename = "ref")]
-    pub ref_index: u32,
-    /// Size in bytes (if known)
-    #[serde(default)]
-    pub size: Option<usize>,
-}
-
-/// Custom attribute with protection status
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomAttributeInfo {
-    pub value: String,
-    #[serde(default)]
-    pub protected: bool,
-}
-
-/// Entry data for display
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntryInfo {
-    pub uuid: String,
-    pub title: String,
-    pub username: String,
-    #[serde(default)]
-    pub password: Option<String>,
-    pub url: String,
-    pub notes: String,
-    #[serde(rename = "parent_group")]
-    pub group_uuid: Option<String>,
-    /// TOTP/OTP configuration (otpauth:// URI or bare secret)
-    #[serde(default)]
-    pub otp: Option<String>,
-    /// Custom attributes (non-standard String fields) with protection status
-    #[serde(default)]
-    pub custom_attributes: std::collections::HashMap<String, CustomAttributeInfo>,
-    /// File attachments
-    #[serde(default)]
-    pub attachments: Vec<AttachmentInfo>,
-    /// Tags
-    #[serde(default)]
-    pub tags: Vec<String>,
-    /// Whether the entry expires
-    #[serde(default)]
-    pub expires: bool,
-    /// Expiry time (if expires is true)
-    pub expiry_time: Option<String>,
-    /// Standard icon ID (0-68)
-    pub icon_id: Option<u32>,
-    /// Custom icon UUID (for database-specific icons)
-    pub custom_icon_uuid: Option<String>,
-    /// Historical versions of this entry (oldest first)
-    #[serde(default)]
-    pub history: Vec<HistoryEntryInfo>,
-}
-
-/// Group data for display
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GroupInfo {
-    pub uuid: String,
-    pub name: String,
-    pub parent: Option<String>,
-    #[serde(rename = "icon_id")]
-    pub icon: Option<u32>,
 }
 
 /// Connection state for the optional localhost unlock helper.
@@ -445,29 +209,56 @@ pub enum HelperStatus {
     Unavailable,
 }
 
+/// Result of the save state machine, applied to the session afterwards.
+struct SaveProgress {
+    local: WasmDocument,
+    base: WasmDocument,
+    base_bytes: Vec<u8>,
+    source: DatabaseSource,
+    merged: bool,
+    conflicts: Vec<String>,
+}
+
 /// Global application state - all fields are Copy signals
 #[derive(Clone, Copy)]
 pub struct AppState {
     /// Current view
     pub current_view: RwSignal<AppView>,
-    /// Currently open database (wrapped in Rc for Clone)
-    pub database: RwSignal<Option<Rc<std::cell::RefCell<WasmDatabase>>>>,
     /// Database name
     pub database_name: RwSignal<String>,
-    /// Source of the database
-    pub database_source: RwSignal<Option<DatabaseSource>>,
-    /// Pending file data awaiting password
-    pub pending_file_data: RwSignal<Option<Vec<u8>>>,
-    /// All entries in the database
-    pub entries: RwSignal<Vec<EntryInfo>>,
-    /// All groups in the database
-    pub groups: RwSignal<Vec<GroupInfo>>,
+    /// Vault awaiting its password
+    pub pending: RwSignal<Option<PendingVault>>,
+    session: StoredValue<Option<Session>>,
+    /// All entries in the database, including the recycle bin
+    pub entries: RwSignal<Rc<Vec<EntryView>>>,
+    /// All groups in the database, root first
+    pub groups: RwSignal<Rc<Vec<GroupView>>>,
+    /// Database settings
+    pub meta: RwSignal<Option<MetaView>>,
+    /// Custom icons in document order
+    pub custom_icons: RwSignal<Rc<Vec<IconImage>>>,
+    /// Summaries of unsaved changes, oldest first
+    pub changes: RwSignal<Vec<String>>,
+    /// A save is running; edits are refused meanwhile
+    pub saving: RwSignal<bool>,
+    /// Short confirmation after a successful save
+    pub save_notice: RwSignal<Option<String>>,
+    /// Titles changed on both sides in the last merging save
+    pub merge_conflicts: RwSignal<Vec<String>>,
+    /// Departure waiting for the unsaved-changes decision
+    pub departure: RwSignal<Option<Departure>>,
+    /// Whether the unsaved-changes list is open
+    pub show_changes: RwSignal<bool>,
+    /// Whether the database settings dialog is open
+    pub show_settings: RwSignal<bool>,
+    /// Entry editor shown in the detail panel
+    pub editor: RwSignal<Option<EntryEditor>>,
     /// Currently selected group UUID
-    pub selected_group: RwSignal<Option<String>>,
+    pub selected_group: RwSignal<Option<Uuid>>,
     /// Currently selected tag
     pub selected_tag: RwSignal<Option<String>>,
     /// Currently selected entry UUID
-    pub selected_entry: RwSignal<Option<String>>,
+    pub selected_entry: RwSignal<Option<Uuid>>,
     /// Search query
     pub search_query: RwSignal<String>,
     /// Error message to display
@@ -488,12 +279,21 @@ impl AppState {
 
         Self {
             current_view: create_rw_signal(AppView::FilePicker),
-            database: create_rw_signal(None),
             database_name: create_rw_signal(String::new()),
-            database_source: create_rw_signal(None),
-            pending_file_data: create_rw_signal(None),
-            entries: create_rw_signal(Vec::new()),
-            groups: create_rw_signal(Vec::new()),
+            pending: create_rw_signal(None),
+            session: store_value(None),
+            entries: create_rw_signal(Rc::new(Vec::new())),
+            groups: create_rw_signal(Rc::new(Vec::new())),
+            meta: create_rw_signal(None),
+            custom_icons: create_rw_signal(Rc::new(Vec::new())),
+            changes: create_rw_signal(Vec::new()),
+            saving: create_rw_signal(false),
+            save_notice: create_rw_signal(None),
+            merge_conflicts: create_rw_signal(Vec::new()),
+            departure: create_rw_signal(None),
+            show_changes: create_rw_signal(false),
+            show_settings: create_rw_signal(false),
+            editor: create_rw_signal(None),
             selected_group: create_rw_signal(None),
             selected_tag: create_rw_signal(None),
             selected_entry: create_rw_signal(None),
@@ -524,481 +324,409 @@ impl AppState {
     /// Set pending file data and show unlock dialog
     pub fn set_pending_file(&self, data: Vec<u8>, source: DatabaseSource) {
         self.database_name.set(source.name().to_string());
-        self.database_source.set(Some(source));
-        self.pending_file_data.set(Some(data));
+        self.pending.set(Some(PendingVault { data, source }));
         self.current_view.set(AppView::Unlock);
     }
 
-    /// Attempt to unlock the database with a password
-    #[allow(dead_code)]
-    pub fn unlock_database(&self, password: &str) -> Result<(), String> {
-        let data = self
-            .pending_file_data
-            .get_untracked()
-            .ok_or_else(|| "No file data pending".to_string())?;
-
-        match WasmDatabase::open(&data, password) {
-            Ok(db) => {
-                let entries_json = db.get_entries();
-                let entries: Vec<EntryInfo> =
-                    serde_json::from_str(&entries_json).unwrap_or_default();
-
-                let groups_json = db.get_groups();
-                let groups: Vec<GroupInfo> = serde_json::from_str(&groups_json).unwrap_or_default();
-
-                self.database
-                    .set(Some(Rc::new(std::cell::RefCell::new(db))));
-                self.entries.set(entries);
-                self.groups.set(groups);
-                self.pending_file_data.set(None);
-                self.error_message.set(None);
-                self.current_view.set(AppView::Database);
-
-                Ok(())
+    /// Derive the transformed key with the fastest available Argon2, then open the
+    /// document on the main thread.
+    pub fn unlock(
+        &self,
+        password: Zeroizing<String>,
+        is_unlocking: RwSignal<bool>,
+        error_signal: RwSignal<Option<String>>,
+    ) {
+        let fail = move |message: String| {
+            error_signal.set(Some(message));
+            is_unlocking.set(false);
+        };
+        let Some(PendingVault { data, source }) = self.pending.get_untracked() else {
+            fail("No file data pending".to_string());
+            return;
+        };
+        let params = match WasmDocument::kdf_params(&data) {
+            Ok(params) => params,
+            Err(error) => {
+                fail(error);
+                return;
             }
-            Err(e) => {
-                let error = e.as_string().unwrap_or_else(|| format!("{:?}", e));
-                Err(error)
+        };
+        let composite_key = keeweb_wasm::composite_key(&password);
+        drop(password);
+
+        let state = *self;
+        spawn_local(async move {
+            let opened = match kdf::derive_transformed_key(&params, &composite_key).await {
+                Ok(transformed_key) => WasmDocument::open(&data, &composite_key, &transformed_key),
+                Err(error) => Err(error),
+            };
+            match opened {
+                Ok(document) => state.open_session(document, data, source),
+                Err(error) => fail(error),
+            }
+        });
+    }
+
+    fn open_session(&self, document: WasmDocument, data: Vec<u8>, source: DatabaseSource) {
+        self.database_name.set(source.name().to_string());
+        self.session.set_value(Some(Session {
+            base: document.clone(),
+            local: document,
+            base_bytes: data,
+            source,
+        }));
+        self.pending.set(None);
+        self.changes.set(Vec::new());
+        self.merge_conflicts.set(Vec::new());
+        self.save_notice.set(None);
+        self.error_message.set(None);
+        self.refresh_views();
+        self.current_view.set(AppView::Database);
+    }
+
+    /// Rebuild the reactive views from the local document.
+    fn refresh_views(&self) {
+        let views = self.session.with_value(|session| {
+            session.as_ref().map(|session| {
+                let document = session.local.document();
+                let icons: Vec<IconImage> = document
+                    .custom_icons()
+                    .into_iter()
+                    .map(|icon| IconImage {
+                        uuid: icon.uuid,
+                        url: format!("data:image/png;base64,{}", BASE64.encode(&icon.png)),
+                    })
+                    .collect();
+                (
+                    document.entries(),
+                    document.groups(),
+                    document.meta(),
+                    icons,
+                )
+            })
+        });
+        let Some((entries, groups, meta, icons)) = views else {
+            return;
+        };
+
+        // Drop selections that no longer exist (deleted, emptied, merged away).
+        if let Some(selected) = self.selected_entry.get_untracked() {
+            if !entries.iter().any(|entry| entry.uuid == selected) {
+                self.selected_entry.set(None);
+            }
+        }
+        if let Some(EntryEditor::Edit(uuid)) = self.editor.get_untracked() {
+            if !entries.iter().any(|entry| entry.uuid == uuid) {
+                self.editor.set(None);
+            }
+        }
+        if let Some(selected) = self.selected_group.get_untracked() {
+            if !groups.iter().any(|group| group.uuid == selected) {
+                self.selected_group.set(None);
+            }
+        }
+
+        self.entries.set(Rc::new(entries));
+        self.groups.set(Rc::new(groups));
+        self.meta.set(Some(meta));
+        if self
+            .custom_icons
+            .with_untracked(|current| **current != icons)
+        {
+            self.custom_icons.set(Rc::new(icons));
+        }
+    }
+
+    fn clear_session(&self) {
+        self.session.set_value(None);
+        self.entries.set(Rc::new(Vec::new()));
+        self.groups.set(Rc::new(Vec::new()));
+        self.meta.set(None);
+        self.custom_icons.set(Rc::new(Vec::new()));
+        self.changes.set(Vec::new());
+        self.merge_conflicts.set(Vec::new());
+        self.save_notice.set(None);
+        self.departure.set(None);
+        self.show_changes.set(false);
+        self.show_settings.set(false);
+        self.editor.set(None);
+        self.selected_group.set(None);
+        self.selected_tag.set(None);
+        self.selected_entry.set(None);
+        self.search_query.set(String::new());
+    }
+
+    /// Apply an edit to the local document and record it as unsaved.
+    pub fn apply(&self, change: Change) -> Result<ChangeOutcome, String> {
+        if self.saving.get_untracked() {
+            return Err("Wait for the current save to finish.".to_string());
+        }
+        let outcome = self
+            .session
+            .try_update_value(|session| match session {
+                Some(session) => session.local.apply(change),
+                None => Err("No database is open.".to_string()),
+            })
+            .unwrap_or_else(|| Err("No database is open.".to_string()))?;
+        if outcome.changed {
+            self.changes
+                .update(|changes| changes.push(outcome.summary.clone()));
+            self.save_notice.set(None);
+            self.refresh_views();
+        }
+        Ok(outcome)
+    }
+
+    /// [`AppState::apply`] for buttons without their own error display.
+    pub fn apply_or_report(&self, change: Change) -> Option<ChangeOutcome> {
+        match self.apply(change) {
+            Ok(outcome) => {
+                self.error_message.set(None);
+                Some(outcome)
+            }
+            Err(error) => {
+                self.error_message.set(Some(error));
+                None
             }
         }
     }
 
-    /// Attempt to unlock the database using parallel Argon2 + Worker decryption
-    /// This uses multi-threaded Argon2 via SharedArrayBuffer for best performance
-    pub fn unlock_database_async(
-        &self,
-        password: &str,
-        is_unlocking: RwSignal<bool>,
-        error_signal: RwSignal<Option<String>>,
-    ) {
-        let data = match self.pending_file_data.get_untracked() {
-            Some(d) => d,
-            None => {
-                error_signal.set(Some("No file data pending".to_string()));
-                is_unlocking.set(false);
-                return;
-            }
-        };
+    pub fn attachment(&self, entry: Uuid, name: &str) -> Option<Vec<u8>> {
+        self.session.with_value(|session| {
+            session
+                .as_ref()
+                .and_then(|session| session.local.document().attachment(entry, name))
+        })
+    }
 
-        let state = *self;
-        let password_str = password.to_string();
-        let data_clone = data.clone();
+    pub fn history_attachment(&self, entry: Uuid, index: usize, name: &str) -> Option<Vec<u8>> {
+        self.session.with_value(|session| {
+            session.as_ref().and_then(|session| {
+                session
+                    .local
+                    .document()
+                    .history_attachment(entry, index, name)
+            })
+        })
+    }
 
-        // Step 1: Extract KDF parameters from KDBX header to check memory requirements
-        let start_time = perf_now();
-        log::info!("Extracting KDF params...");
+    /// Whether there are unsaved changes (tracked).
+    pub fn is_dirty(&self) -> bool {
+        self.changes.with(|changes| !changes.is_empty())
+    }
 
-        let kdf_params = match keeweb_wasm::get_kdf_params(&data, &password_str) {
-            Ok(params) => {
-                log::info!("KDF params extracted successfully");
-                params
-            }
-            Err(e) => {
-                let err = e.as_string().unwrap_or_else(|| format!("{:?}", e));
-                log::error!("Failed to extract KDF params: {}", err);
-                error_signal.set(Some(err));
-                is_unlocking.set(false);
-                return;
-            }
-        };
+    pub fn root_group(&self) -> Option<Uuid> {
+        self.groups
+            .with(|groups| groups.first().map(|group| group.uuid))
+    }
 
-        let memory_mb = kdf_params.memory_kb() / 1024;
-        let parallelism = kdf_params.parallelism();
-        log::info!(
-            "KDF params: memory_kb={}, memory_mb={}, parallelism={}",
-            kdf_params.memory_kb(),
-            memory_mb,
-            parallelism
-        );
+    pub fn group(&self, uuid: Uuid) -> Option<GroupView> {
+        self.groups
+            .with(|groups| groups.iter().find(|group| group.uuid == uuid).cloned())
+    }
 
-        // Use the native helper whenever it is configured. Native Argon2 is several
-        // times faster than WebAssembly at every memory size. Without the helper,
-        // databases with 256 MB or more use the slow fallback because the parallel
-        // WebAssembly path cannot allocate that much memory.
-        if memory_mb >= 256 || helper_client::is_helper_configured() {
-            let argon2_type = kdf_params.kdf_type();
-            let composite_key = kdf_params.composite_key();
-            let salt = kdf_params.salt();
-            let iterations = kdf_params.iterations() as u32;
-            let memory_kb = kdf_params.memory_kb() as u32;
-            let version = kdf_params.version();
+    pub fn entry(&self, uuid: Uuid) -> Option<EntryView> {
+        self.entries
+            .with(|entries| entries.iter().find(|entry| entry.uuid == uuid).cloned())
+    }
 
-            let helper_configured = helper_client::is_helper_configured();
-            log::info!(
-                "KDF memory {}MB - helper configured: {}",
-                memory_mb,
-                helper_configured
-            );
+    /// Group that new entries and groups go into: the selected group unless it is in
+    /// the recycle bin, otherwise the root.
+    pub fn target_group(&self) -> Option<Uuid> {
+        self.selected_group
+            .get_untracked()
+            .and_then(|uuid| self.group(uuid))
+            .filter(|group| !group.in_recycle_bin && !group.is_recycle_bin)
+            .map(|group| group.uuid)
+            .or_else(|| self.root_group())
+    }
 
-            if helper_configured {
-                let argon2_type_clone = argon2_type.clone();
-                let composite_key_clone = composite_key.clone();
-                let salt_clone = salt.clone();
-                let data_for_helper = data_clone.clone();
-                let password_for_helper = password_str.clone();
+    /// Get filtered entries based on search query, selected group, or selected tag.
+    /// Entries in the recycle bin only show while a recycle bin group is selected.
+    pub fn filtered_entries(&self) -> Vec<EntryView> {
+        let query = self.search_query.get().to_lowercase();
+        let selected_group = self.selected_group.get();
+        let selected_tag = self.selected_tag.get();
+        let bin_selected = selected_group
+            .and_then(|uuid| self.group(uuid))
+            .is_some_and(|group| group.is_recycle_bin || group.in_recycle_bin);
 
-                spawn_local(async move {
-                    log::info!("Checking helper availability...");
-                    match helper_client::check_helper_available().await {
-                        Ok(true) => {
-                            log::info!("Helper available, calling argon2_hash...");
-                            match helper_client::helper_argon2_hash(
-                                &argon2_type_clone,
-                                &composite_key_clone,
-                                &salt_clone,
-                                iterations,
-                                memory_kb,
-                                parallelism,
-                                32,
-                                version,
-                            )
-                            .await
-                            {
-                                Ok((derived_key, server_time_ms)) => {
-                                    debug_timing!(
-                                        "[TIMING] Argon2 (helper server): {}ms",
-                                        server_time_ms
-                                    );
-                                    let decrypt_start = perf_now();
-
-                                    // Decrypt with the derived key
-                                    worker_decrypt(
-                                        data_for_helper,
-                                        password_for_helper,
-                                        derived_key,
-                                        move |result| {
-                                            spawn_local(async move {
-                                                match result {
-                                                    Ok(unlock_result) => {
-                                                        let decrypt_time =
-                                                            perf_now() - decrypt_start;
-                                                        debug_timing!(
-                                                            "[TIMING] Decryption: {:.0}ms",
-                                                            decrypt_time
-                                                        );
-
-                                                        let entries: Vec<EntryInfo> =
-                                                            serde_json::from_str(
-                                                                &unlock_result.entries_json,
-                                                            )
-                                                            .unwrap_or_default();
-                                                        let groups: Vec<GroupInfo> =
-                                                            serde_json::from_str(
-                                                                &unlock_result.groups_json,
-                                                            )
-                                                            .unwrap_or_default();
-
-                                                        state.database.set(None);
-                                                        state.entries.set(entries);
-                                                        state.groups.set(groups);
-                                                        state.pending_file_data.set(None);
-                                                        state.error_message.set(None);
-                                                        state.current_view.set(AppView::Database);
-
-                                                        let total_time = perf_now() - start_time;
-                                                        debug_timing!(
-                                                            "[TIMING] Total unlock (helper): {:.0}ms",
-                                                            total_time
-                                                        );
-                                                    }
-                                                    Err(e) => {
-                                                        error_signal.set(Some(e));
-                                                        is_unlocking.set(false);
-                                                    }
-                                                }
-                                            });
-                                        },
-                                    );
-                                }
-                                Err(e) => {
-                                    // Fall back to single-threaded
-                                    log::warn!(
-                                        "Helper argon2 failed: {:?}, falling back to slow unlock",
-                                        e
-                                    );
-                                    do_slow_unlock(
-                                        data_for_helper,
-                                        password_for_helper,
-                                        state,
-                                        start_time,
-                                        error_signal,
-                                        is_unlocking,
-                                        memory_mb,
-                                    );
-                                }
-                            }
+        let mut filtered: Vec<EntryView> = self.entries.with(|entries| {
+            entries
+                .iter()
+                .filter(|entry| {
+                    if let Some(tag) = &selected_tag {
+                        if !entry.tags.contains(tag) {
+                            return false;
                         }
-                        Ok(false) => {
-                            log::info!(
-                                "Helper not available (check returned false), falling back to slow unlock"
-                            );
-                            do_slow_unlock(
-                                data_for_helper,
-                                password_for_helper,
-                                state,
-                                start_time,
-                                error_signal,
-                                is_unlocking,
-                                memory_mb,
-                            );
-                        }
-                        Err(e) => {
-                            log::warn!("Helper check failed: {}, falling back to slow unlock", e);
-                            do_slow_unlock(
-                                data_for_helper,
-                                password_for_helper,
-                                state,
-                                start_time,
-                                error_signal,
-                                is_unlocking,
-                                memory_mb,
-                            );
+                    } else if let Some(group) = selected_group {
+                        if entry.group != group {
+                            return false;
                         }
                     }
-                });
-                return;
-            }
+                    if entry.in_recycle_bin && !bin_selected {
+                        return false;
+                    }
+                    if !query.is_empty() {
+                        let matches = |key: &str| {
+                            entry
+                                .field(key)
+                                .is_some_and(|value| value.to_lowercase().contains(&query))
+                        };
+                        return matches("Title") || matches("UserName") || matches("URL");
+                    }
+                    true
+                })
+                .cloned()
+                .collect()
+        });
 
-            // No helper configured, use slow fallback
-            log::info!("No helper configured, using slow fallback");
-            do_slow_unlock(
-                data_clone,
-                password_str.clone(),
-                state,
-                start_time,
-                error_signal,
-                is_unlocking,
-                memory_mb,
-            );
-            return;
+        filtered.sort_by_cached_key(|entry| entry.title().to_lowercase());
+        filtered
+    }
+
+    /// Get the currently selected entry
+    pub fn get_selected_entry(&self) -> Option<EntryView> {
+        let selected = self.selected_entry.get()?;
+        self.entries
+            .with(|entries| entries.iter().find(|entry| entry.uuid == selected).cloned())
+    }
+
+    /// Save to the vault's source. For server vaults a stale revision triggers a
+    /// three-way merge with the server copy, up to [`MAX_MERGE_ATTEMPTS`] times.
+    pub async fn save(self) -> Result<(), String> {
+        if self.saving.get_untracked() {
+            return Err("A save is already in progress.".to_string());
         }
+        let snapshot = self.session.with_value(|session| {
+            session.as_ref().map(|session| SaveProgress {
+                local: session.local.clone(),
+                base: session.base.clone(),
+                base_bytes: Vec::new(),
+                source: session.source.clone(),
+                merged: false,
+                conflicts: Vec::new(),
+            })
+        });
+        let Some(mut progress) = snapshot else {
+            return Err("No database is open.".to_string());
+        };
 
-        // For normal memory (<1GB), use parallel argon2 if available
-        let argon2_ready = is_argon2_ready();
-        log::info!("Normal memory path: is_argon2_ready() = {}", argon2_ready);
+        self.saving.set(true);
+        self.save_notice.set(None);
+        let result = match progress.source.clone() {
+            DatabaseSource::Local { name } => save_local(&mut progress, &name),
+            DatabaseSource::Server { id, name, .. } => save_server(&mut progress, &id, &name).await,
+        };
+        self.saving.set(false);
 
-        if argon2_ready {
-            // Step 2: Run Argon2 with parallel threads
-            let argon2_type = kdf_params.kdf_type();
-            let composite_key = kdf_params.composite_key();
-            let salt = kdf_params.salt();
-            let iterations = kdf_params.iterations() as u32;
-            let memory_kb = kdf_params.memory_kb() as u32;
+        if result.is_err() && !progress.merged {
+            return result;
+        }
+        // Edits are refused while saving, so the session's local document is the one
+        // this save started from and may be replaced by the merged result.
+        let merged = progress.merged;
+        self.session.update_value(|session| {
+            if let Some(session) = session {
+                session.local = progress.local;
+                session.source = progress.source;
+                if !progress.base_bytes.is_empty() {
+                    session.base = progress.base;
+                    session.base_bytes = progress.base_bytes;
+                }
+            }
+        });
+        if merged {
+            self.refresh_views();
+        }
+        if result.is_ok() {
+            self.changes.set(Vec::new());
+            self.save_notice.set(Some(
+                if merged {
+                    "Saved with changes from the server"
+                } else {
+                    "Saved"
+                }
+                .to_string(),
+            ));
+            self.merge_conflicts.set(progress.conflicts);
+        }
+        result
+    }
 
-            argon2_hash(
-                argon2_type,
-                composite_key,
-                salt,
-                iterations,
-                memory_kb,
-                parallelism,
-                32,
-                move |argon2_result| {
-                    wasm_bindgen_futures::spawn_local(async move {
-                        match argon2_result {
-                            Ok(derived_key) => {
-                                let argon2_time = perf_now() - start_time;
-                                debug_timing!("[TIMING] Argon2 (parallel): {:.0}ms", argon2_time);
-                                let decrypt_start = perf_now();
+    /// Save from a button or shortcut; failures go to the error banner.
+    pub fn save_in_background(&self) {
+        let state = *self;
+        spawn_local(async move {
+            match state.save().await {
+                Ok(()) => state.error_message.set(None),
+                Err(error) => state
+                    .error_message
+                    .set(Some(format!("Save failed: {error}"))),
+            }
+        });
+    }
 
-                                // Step 3: Decrypt with the derived key in worker
-                                worker_decrypt(
-                                    data_clone,
-                                    password_str,
-                                    derived_key,
-                                    move |result| {
-                                        wasm_bindgen_futures::spawn_local(async move {
-                                            match result {
-                                                Ok(unlock_result) => {
-                                                    let decrypt_time = perf_now() - decrypt_start;
-                                                    debug_timing!(
-                                                        "[TIMING] Decryption: {:.0}ms",
-                                                        decrypt_time
-                                                    );
-
-                                                    let entries: Vec<EntryInfo> =
-                                                        serde_json::from_str(
-                                                            &unlock_result.entries_json,
-                                                        )
-                                                        .unwrap_or_default();
-                                                    let groups: Vec<GroupInfo> =
-                                                        serde_json::from_str(
-                                                            &unlock_result.groups_json,
-                                                        )
-                                                        .unwrap_or_default();
-
-                                                    state.database.set(None);
-                                                    state.entries.set(entries);
-                                                    state.groups.set(groups);
-                                                    state.pending_file_data.set(None);
-                                                    state.error_message.set(None);
-                                                    state.current_view.set(AppView::Database);
-
-                                                    let total_time = perf_now() - start_time;
-                                                    debug_timing!(
-                                                        "[TIMING] Total unlock (parallel): {:.0}ms",
-                                                        total_time
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    error_signal.set(Some(e));
-                                                    is_unlocking.set(false);
-                                                }
-                                            }
-                                        });
-                                    },
-                                );
-                            }
-                            Err(_) => {
-                                // Fall back to worker-based unlock
-                                worker_unlock(data_clone, password_str, move |result| {
-                                    wasm_bindgen_futures::spawn_local(async move {
-                                        match result {
-                                            Ok(unlock_result) => {
-                                                let total_time = perf_now() - start_time;
-                                                debug_timing!(
-                                                    "[TIMING] Total unlock (worker fallback): {:.0}ms",
-                                                    total_time
-                                                );
-
-                                                let entries: Vec<EntryInfo> = serde_json::from_str(
-                                                    &unlock_result.entries_json,
-                                                )
-                                                .unwrap_or_default();
-                                                let groups: Vec<GroupInfo> = serde_json::from_str(
-                                                    &unlock_result.groups_json,
-                                                )
-                                                .unwrap_or_default();
-
-                                                state.database.set(None);
-                                                state.entries.set(entries);
-                                                state.groups.set(groups);
-                                                state.pending_file_data.set(None);
-                                                state.error_message.set(None);
-                                                state.current_view.set(AppView::Database);
-                                            }
-                                            Err(e) => {
-                                                error_signal.set(Some(e));
-                                                is_unlocking.set(false);
-                                            }
-                                        }
-                                    });
-                                });
-                            }
-                        }
-                    });
-                },
-            );
+    /// Leave the vault, asking first when there are unsaved changes.
+    pub fn request_departure(&self, departure: Departure) {
+        if self.changes.with_untracked(|changes| changes.is_empty()) {
+            self.depart(departure);
         } else {
-            // Argon2 not ready, use legacy worker unlock
-            let start_time = perf_now();
-            worker_unlock(data, password_str, move |result| {
-                wasm_bindgen_futures::spawn_local(async move {
-                    match result {
-                        Ok(unlock_result) => {
-                            let total_time = perf_now() - start_time;
-                            debug_timing!(
-                                "[TIMING] Total unlock (legacy worker): {:.0}ms",
-                                total_time
-                            );
+            self.departure.set(Some(departure));
+        }
+    }
 
-                            let entries: Vec<EntryInfo> =
-                                serde_json::from_str(&unlock_result.entries_json)
-                                    .unwrap_or_default();
-                            let groups: Vec<GroupInfo> =
-                                serde_json::from_str(&unlock_result.groups_json)
-                                    .unwrap_or_default();
-
-                            state.database.set(None);
-                            state.entries.set(entries);
-                            state.groups.set(groups);
-                            state.pending_file_data.set(None);
-                            state.error_message.set(None);
-                            state.current_view.set(AppView::Database);
-                        }
-                        Err(e) => {
-                            error_signal.set(Some(e));
-                            is_unlocking.set(false);
-                        }
-                    }
-                });
-            });
+    /// Leave the vault, discarding unsaved changes.
+    pub fn depart(&self, departure: Departure) {
+        match departure {
+            Departure::Close => self.close_database(),
+            Departure::Lock => self.lock(),
         }
     }
 
     /// Close the current database
     pub fn close_database(&self) {
-        self.database.set(None);
+        self.clear_session();
+        self.pending.set(None);
         self.database_name.set(String::new());
-        self.database_source.set(None);
-        self.entries.set(Vec::new());
-        self.groups.set(Vec::new());
-        self.selected_group.set(None);
-        self.selected_tag.set(None);
-        self.selected_entry.set(None);
-        self.search_query.set(String::new());
         self.current_view.set(AppView::FilePicker);
     }
 
-    /// Refresh entries from the database
-    #[allow(dead_code)]
-    pub fn refresh_entries(&self) {
-        if let Some(db) = self.database.get() {
-            let db = db.borrow();
-            let entries_json = db.get_entries();
-            let entries: Vec<EntryInfo> = serde_json::from_str(&entries_json).unwrap_or_default();
-            self.entries.set(entries);
+    /// Forget the decrypted document and ask for the password of the last saved
+    /// version again.
+    pub fn lock(&self) {
+        let pending = self.session.with_value(|session| {
+            session.as_ref().map(|session| PendingVault {
+                data: session.base_bytes.clone(),
+                source: session.source.clone(),
+            })
+        });
+        self.clear_session();
+        match pending {
+            Some(pending) => {
+                self.pending.set(Some(pending));
+                self.current_view.set(AppView::Unlock);
+            }
+            None => self.close_database(),
         }
     }
 
-    /// Get filtered entries based on search query, selected group, or selected tag
-    pub fn filtered_entries(&self) -> Vec<EntryInfo> {
-        let entries = self.entries.get();
-        let query = self.search_query.get().to_lowercase();
-        let selected_group = self.selected_group.get();
-        let selected_tag = self.selected_tag.get();
-
-        let mut filtered: Vec<EntryInfo> = entries
-            .into_iter()
-            .filter(|entry| {
-                // Filter by tag if selected (takes priority over group)
-                if let Some(ref tag) = selected_tag {
-                    if !entry.tags.contains(tag) {
-                        return false;
-                    }
-                }
-                // Filter by group if selected (and no tag selected)
-                else if let Some(ref group_uuid) = selected_group {
-                    if entry.group_uuid.as_ref() != Some(group_uuid) {
-                        return false;
-                    }
-                }
-
-                // Filter by search query
-                if !query.is_empty() {
-                    let title_match = entry.title.to_lowercase().contains(&query);
-                    let username_match = entry.username.to_lowercase().contains(&query);
-                    let url_match = entry.url.to_lowercase().contains(&query);
-                    return title_match || username_match || url_match;
-                }
-
-                true
-            })
-            .collect();
-
-        // Sort alphabetically by title (case-insensitive)
-        filtered.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
-
-        filtered
-    }
-
-    /// Get the currently selected entry
-    pub fn get_selected_entry(&self) -> Option<EntryInfo> {
-        let selected_uuid = self.selected_entry.get()?;
-        self.entries
-            .get()
-            .into_iter()
-            .find(|e| e.uuid == selected_uuid)
+    /// Lock after inactivity. Unsaved changes are saved first; if that fails the vault
+    /// stays unlocked and shows why.
+    pub async fn auto_lock(self) {
+        if self.current_view.get_untracked() != AppView::Database {
+            return;
+        }
+        if !self.changes.with_untracked(|changes| changes.is_empty()) {
+            if let Err(error) = self.save().await {
+                self.error_message.set(Some(format!(
+                    "Auto-lock was cancelled because saving failed: {error}"
+                )));
+                return;
+            }
+        }
+        self.departure.set(None);
+        self.lock();
     }
 }
 
@@ -1008,43 +736,78 @@ impl Default for AppState {
     }
 }
 
-/// Helper function for slow single-threaded unlock (used for high-memory Argon2)
-fn do_slow_unlock(
-    data: Vec<u8>,
-    password: String,
-    state: AppState,
-    start_time: f64,
-    error_signal: RwSignal<Option<String>>,
-    is_unlocking: RwSignal<bool>,
-    _memory_mb: u64,
-) {
-    worker_unlock_standard(data, password, move |result| {
-        spawn_local(async move {
-            match result {
-                Ok(unlock_result) => {
-                    let total_time = perf_now() - start_time;
-                    debug_timing!(
-                        "[TIMING] Total unlock (slow/single-threaded): {:.0}ms",
-                        total_time
-                    );
+/// Without server storage a save hands the encrypted file to the browser's downloads.
+fn save_local(progress: &mut SaveProgress, name: &str) -> Result<(), String> {
+    let bytes = progress.local.save()?;
+    files::download_bytes(name, &bytes)?;
+    progress.base = progress.local.clone();
+    progress.base_bytes = bytes;
+    Ok(())
+}
 
-                    let entries: Vec<EntryInfo> =
-                        serde_json::from_str(&unlock_result.entries_json).unwrap_or_default();
-                    let groups: Vec<GroupInfo> =
-                        serde_json::from_str(&unlock_result.groups_json).unwrap_or_default();
-
-                    state.database.set(None);
-                    state.entries.set(entries);
-                    state.groups.set(groups);
-                    state.pending_file_data.set(None);
-                    state.error_message.set(None);
-                    state.current_view.set(AppView::Database);
-                }
-                Err(e) => {
-                    error_signal.set(Some(e));
-                    is_unlocking.set(false);
-                }
+async fn save_server(progress: &mut SaveProgress, id: &str, name: &str) -> Result<(), String> {
+    let mut merges = 0;
+    loop {
+        let DatabaseSource::Server { revision, .. } = &progress.source else {
+            return Err("The vault is not stored on the server.".to_string());
+        };
+        let bytes = progress.local.save()?;
+        match server::replace(id, revision, &bytes).await {
+            Ok(written) => {
+                progress.source = DatabaseSource::Server {
+                    id: written.id,
+                    name: written.name,
+                    revision: written.revision,
+                };
+                progress.base = progress.local.clone();
+                progress.base_bytes = bytes;
+                return Ok(());
             }
-        });
-    });
+            Err(ReplaceError::Failed(error)) => return Err(error),
+            Err(ReplaceError::Stale) if merges == MAX_MERGE_ATTEMPTS => {
+                return Err(
+                    "The database kept changing on the server. Try saving again.".to_string(),
+                );
+            }
+            Err(ReplaceError::Stale) => {
+                merges += 1;
+                merge_server_revision(progress, id, name).await?;
+            }
+        }
+    }
+}
+
+/// Merge the current server copy into the local document. Afterwards the server copy
+/// is the merge base, since it is the common ancestor of the merged document and any
+/// later server revision.
+async fn merge_server_revision(
+    progress: &mut SaveProgress,
+    id: &str,
+    name: &str,
+) -> Result<(), String> {
+    let (remote_bytes, remote_revision) = server::download(id, name).await?;
+    // The server copy may have been re-salted by another client, so derive its key from
+    // its own header with this session's password.
+    let params = WasmDocument::kdf_params(&remote_bytes)?;
+    let transformed_key =
+        kdf::derive_transformed_key(&params, progress.local.composite_key()).await?;
+    let remote = progress
+        .local
+        .open_revision(&remote_bytes, &transformed_key)
+        .map_err(|error| format!("The server copy could not be opened: {error}"))?;
+    let conflicts = progress.local.merge(&progress.base, &remote)?;
+    for title in conflicts {
+        if !progress.conflicts.contains(&title) {
+            progress.conflicts.push(title);
+        }
+    }
+    progress.base = remote;
+    progress.base_bytes = remote_bytes;
+    progress.source = DatabaseSource::Server {
+        id: id.to_string(),
+        name: name.to_string(),
+        revision: remote_revision,
+    };
+    progress.merged = true;
+    Ok(())
 }

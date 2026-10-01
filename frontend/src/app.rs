@@ -4,11 +4,21 @@ use leptos::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::{
-    auto_lock::AutoLock, entry_detail::EntryDetail, entry_list::EntryList, file_picker::FilePicker,
-    sidebar::Sidebar, theme_toggle::ThemeToggle, unlock_dialog::UnlockDialog,
+    auto_lock::AutoLock,
+    database_settings::DatabaseSettings,
+    entry_detail::EntryPanel,
+    entry_list::EntryList,
+    file_picker::FilePicker,
+    guard::{
+        ChangesDialog, DepartureGuard, MergeConflicts, install_save_shortcut, install_unload_guard,
+    },
+    sidebar::Sidebar,
+    theme_toggle::ThemeToggle,
+    unlock_dialog::UnlockDialog,
 };
 use crate::helper_client;
-use crate::state::{AppState, AppView, HelperStatus, init_argon2, init_theme};
+use crate::kdf::init_argon2;
+use crate::state::{AppState, AppView, Departure, HelperStatus, init_theme};
 
 /// Root application component
 #[component]
@@ -25,8 +35,6 @@ pub fn App() -> impl IntoView {
     init_theme(state.theme.get());
 
     // Initialize argon2-pthread worker in background (for parallel KDF)
-    // Note: The wasm-bindgen-rayon thread pool is initialized by initializer.js
-    // before this code runs, so is_rayon_ready() will return true if it succeeded
     init_argon2(|result| match result {
         Ok(()) => {
             #[cfg(debug_assertions)]
@@ -47,6 +55,9 @@ pub fn App() -> impl IntoView {
         };
         state.helper_status.set(status);
     });
+
+    install_unload_guard(state);
+    install_save_shortcut(state);
 
     view! {
         <div class="app">
@@ -70,6 +81,11 @@ pub fn App() -> impl IntoView {
                     <UnlockDialog />
                 </Show>
 
+                <DepartureGuard />
+                <ChangesDialog />
+                <MergeConflicts />
+                <DatabaseSettings />
+
                 // Auto-lock countdown modal
                 <AutoLock />
             </main>
@@ -81,6 +97,7 @@ pub fn App() -> impl IntoView {
 #[component]
 fn Header() -> impl IntoView {
     let state = expect_context::<AppState>();
+    let in_database = move || state.current_view.get() == AppView::Database;
 
     view! {
         <header class="app-header">
@@ -92,15 +109,18 @@ fn Header() -> impl IntoView {
                 </div>
                 <div class="brand-copy">
                     <h1 class="app-title">"KeeWeb RS"</h1>
-                    <span class="app-subtitle">"A private KeePass reader"</span>
+                    <span class="app-subtitle">"A private KeePass vault"</span>
                 </div>
-                <Show when=move || state.current_view.get() == AppView::Database>
+                <Show when=in_database>
                     <span class="database-name">
                         {move || state.database_name.get()}
                     </span>
                 </Show>
             </div>
             <div class="header-right">
+                <Show when=in_database>
+                    <SaveControls />
+                </Show>
                 <span
                     class="helper-pill"
                     class:helper-pill-connected=move || state.helper_status.get() == HelperStatus::Connected
@@ -114,10 +134,30 @@ fn Header() -> impl IntoView {
                     }}
                 </span>
                 <ThemeToggle />
-                <Show when=move || state.current_view.get() == AppView::Database>
+                <Show when=in_database>
+                    <button
+                        class="theme-toggle"
+                        on:click=move |_| state.show_settings.set(true)
+                        title="Database settings"
+                        aria-label="Database settings"
+                    >
+                        <svg viewBox="0 0 24 24" width="19" height="19">
+                            <path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41L9.25 5.35c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+                        </svg>
+                    </button>
                     <button
                         class="btn btn-secondary btn-lock"
-                        on:click=move |_| state.close_database()
+                        on:click=move |_| state.request_departure(Departure::Close)
+                        title="Close this vault and open another"
+                    >
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path fill="currentColor" d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                        </svg>
+                        "Close"
+                    </button>
+                    <button
+                        class="btn btn-secondary btn-lock"
+                        on:click=move |_| state.request_departure(Departure::Lock)
                         title="Lock database"
                     >
                         <svg viewBox="0 0 24 24" width="16" height="16">
@@ -131,6 +171,43 @@ fn Header() -> impl IntoView {
     }
 }
 
+/// Unsaved-change count and the Save button.
+#[component]
+fn SaveControls() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let count = move || state.changes.with(Vec::len);
+
+    view! {
+        <div class="save-controls">
+            {move || {
+                if count() > 0 {
+                    view! {
+                        <button
+                            class="unsaved-pill"
+                            on:click=move |_| state.show_changes.set(true)
+                            title="Show unsaved changes"
+                        >
+                            {format!("{} unsaved", count())}
+                        </button>
+                    }.into_view()
+                } else {
+                    state.save_notice.get().map(|notice| view! {
+                        <span class="save-notice" role="status">{notice}</span>
+                    }).into_view()
+                }
+            }}
+            <button
+                class="btn btn-primary btn-save"
+                disabled=move || count() == 0 || state.saving.get()
+                on:click=move |_| state.save_in_background()
+                title="Save (Ctrl+S)"
+            >
+                {move || if state.saving.get() { "Saving…" } else { "Save" }}
+            </button>
+        </div>
+    }
+}
+
 /// Main database view with sidebar, entry list, and detail panel
 #[component]
 fn DatabaseView() -> impl IntoView {
@@ -141,10 +218,24 @@ fn DatabaseView() -> impl IntoView {
             <Sidebar />
             <div class="content-area">
                 <EntryList />
-                <Show when=move || state.selected_entry.get().is_some()>
-                    <EntryDetail />
+                <Show when=move || state.selected_entry.get().is_some() || state.editor.get().is_some()>
+                    <EntryPanel />
                 </Show>
             </div>
+            <Show when=move || state.error_message.get().is_some()>
+                <div class="toast toast-error" role="alert">
+                    <span>{move || state.error_message.get().unwrap_or_default()}</span>
+                    <button
+                        class="btn-icon"
+                        on:click=move |_| state.error_message.set(None)
+                        aria-label="Dismiss"
+                    >
+                        <svg viewBox="0 0 24 24" width="18" height="18">
+                            <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                        </svg>
+                    </button>
+                </div>
+            </Show>
         </div>
     }
 }

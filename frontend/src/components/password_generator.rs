@@ -28,12 +28,13 @@ impl Default for GeneratorOptions {
     }
 }
 
-/// Password generator component
+/// Password generator component. With `on_use` the generated password can be written
+/// straight into the field that opened the generator.
 #[component]
-pub fn PasswordGenerator<F>(on_close: F) -> impl IntoView
-where
-    F: Fn() + 'static + Clone,
-{
+pub fn PasswordGenerator(
+    #[prop(into)] on_close: Callback<()>,
+    #[prop(optional, into)] on_use: Option<Callback<String>>,
+) -> impl IntoView {
     let options = create_rw_signal(GeneratorOptions::default());
     let generated_password = create_rw_signal(String::new());
     let copied = create_rw_signal(false);
@@ -86,17 +87,14 @@ where
         options.update(|o| o.symbols = !o.symbols);
     };
 
-    let on_close_click = {
-        let on_close = on_close.clone();
-        move |_| on_close()
-    };
+    let on_close_click = move |_| on_close.call(());
 
     view! {
         <div class="dialog-overlay">
             <div class="dialog password-generator-dialog">
                 <div class="dialog-header">
                     <h2>"Password Generator"</h2>
-                    <button class="dialog-close" on:click=on_close_click>
+                    <button type="button" class="dialog-close" on:click=on_close_click>
                         <svg viewBox="0 0 24 24" width="20" height="20">
                             <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                         </svg>
@@ -108,12 +106,12 @@ where
                     <div class="generated-password-display">
                         <code class="generated-password">{move || generated_password.get()}</code>
                         <div class="password-actions">
-                            <button class="btn-icon" on:click=regenerate title="Generate new">
+                            <button type="button" class="btn-icon" on:click=regenerate title="Generate new">
                                 <svg viewBox="0 0 24 24" width="20" height="20">
                                     <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
                                 </svg>
                             </button>
-                            <button
+                            <button type="button"
                                 class="btn-icon"
                                 class:copied=move || copied.get()
                                 on:click=copy
@@ -192,17 +190,34 @@ where
                 </div>
 
                 <div class="dialog-footer">
-                    <button class="btn btn-secondary" on:click={
-                        let on_close = on_close.clone();
-                        move |_| on_close()
-                    }>
+                    <button type="button" class="btn btn-secondary" on:click=move |_| on_close.call(())>
                         "Close"
                     </button>
-                    <button class="btn btn-primary" on:click=copy>
-                        <Show when=move || copied.get() fallback=|| "Copy Password">
-                            "Copied!"
-                        </Show>
-                    </button>
+                    {match on_use {
+                        Some(on_use) => view! {
+                            <button type="button" class="btn btn-secondary" on:click=copy>
+                                <Show when=move || copied.get() fallback=|| "Copy">
+                                    "Copied!"
+                                </Show>
+                            </button>
+                            <button type="button"
+                                class="btn btn-primary"
+                                on:click=move |_| {
+                                    on_use.call(generated_password.get_untracked());
+                                    on_close.call(());
+                                }
+                            >
+                                "Use password"
+                            </button>
+                        }.into_view(),
+                        None => view! {
+                            <button type="button" class="btn btn-primary" on:click=copy>
+                                <Show when=move || copied.get() fallback=|| "Copy Password">
+                                    "Copied!"
+                                </Show>
+                            </button>
+                        }.into_view(),
+                    }}
                 </div>
             </div>
         </div>

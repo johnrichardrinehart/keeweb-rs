@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 kdbx-core = { path = "../kdbx-core" }
-kdbx-diff = { path = "../kdbx-diff" }
+argon2 = "0.5"
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 serde.workspace = true
@@ -19,14 +19,16 @@ serde_json.workspace = true
 serde-wasm-bindgen.workspace = true
 js-sys.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 web-sys = { workspace = true, features = [
     "console",
     "Window",
     "Document",
 ] }
 
-[dev-dependencies]
-wasm-bindgen-test = "0.3"
-
 [features]
 default = []
+
+[dev-dependencies]
+keepass = { workspace = true, features = ["save_kdbx4"] }
+secstr = "0.5"

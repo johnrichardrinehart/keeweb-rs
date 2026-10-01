@@ -1,71 +1,80 @@
-//! Sidebar component with group tree navigation
+//! Sidebar component with group tree navigation and group actions
 
+use keeweb_wasm::document::{Change, GroupEdit, GroupView};
 use leptos::*;
 use std::collections::BTreeSet;
+use uuid::Uuid;
 
-use crate::state::{AppState, GroupInfo};
+use crate::components::dialog::{ConfirmDialog, Dialog, GroupPicker};
+use crate::components::icons::{IconPicker, KeepassIcon};
+use crate::model;
+use crate::state::AppState;
+
+/// Group dialog the sidebar shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GroupModal {
+    Create { parent: Uuid },
+    Edit(Uuid),
+    Move(Uuid),
+    Delete(Uuid),
+    EmptyBin,
+}
 
 /// Sidebar component
 #[component]
 pub fn Sidebar() -> impl IntoView {
     let state = expect_context::<AppState>();
+    let modal = create_rw_signal(Option::<GroupModal>::None);
 
-    // Build a tree of groups from flat list
-    let group_tree = move || {
-        let groups = state.groups.get();
-        build_group_tree(&groups)
-    };
+    // Collect all unique tags from entries outside the recycle bin
+    let all_tags = create_memo(move |_| {
+        state.entries.with(|entries| {
+            entries
+                .iter()
+                .filter(|entry| !entry.in_recycle_bin)
+                .flat_map(|entry| entry.tags.iter())
+                .filter(|tag| !tag.is_empty())
+                .cloned()
+                .collect::<BTreeSet<String>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        })
+    });
 
-    // Collect all unique tags from entries
-    let all_tags = move || {
-        let entries = state.entries.get();
-        let mut tags: BTreeSet<String> = BTreeSet::new();
-        for entry in entries {
-            for tag in entry.tags {
-                if !tag.is_empty() {
-                    tags.insert(tag);
-                }
-            }
-        }
-        tags.into_iter().collect::<Vec<_>>()
+    let selected = move || {
+        state
+            .selected_group
+            .get()
+            .and_then(|uuid| state.group(uuid))
     };
+    let is_root = move |group: &GroupView| group.parent.is_none();
 
     view! {
         <aside class="sidebar">
             <nav class="sidebar-nav">
-                // All Entries at the top
                 <div class="sidebar-section">
-                    <GroupItem
-                        uuid=None
-                        name="All Entries".to_string()
-                        depth=0
-                        has_children=false
-                        is_tag=false
-                    />
+                    <AllEntriesItem />
                 </div>
 
                 <div class="sidebar-divider"></div>
 
-                // Groups section
                 <div class="sidebar-section">
                     <div class="sidebar-section-header">
                         <h3>"Groups"</h3>
                     </div>
                     <div class="group-tree">
-                        <For
-                            each=group_tree
-                            key=|group| group.uuid.clone()
-                            children=move |group| {
-                                view! {
-                                    <GroupTreeNode group=group depth=0 />
-                                }
-                            }
-                        />
+                        {move || {
+                            let groups = state.groups.get();
+                            groups
+                                .iter()
+                                .filter(|group| group.parent.is_none())
+                                .map(|root| view! { <GroupTreeNode groups=groups.clone() group=root.clone() depth=0 /> })
+                                .collect_view()
+                        }}
                     </div>
                 </div>
 
-                // Tags section (only show if there are tags)
-                <Show when=move || !all_tags().is_empty()>
+                <Show when=move || all_tags.with(|tags| !tags.is_empty())>
                     <div class="sidebar-divider"></div>
                     <div class="sidebar-section">
                         <div class="sidebar-section-header">
@@ -73,13 +82,9 @@ pub fn Sidebar() -> impl IntoView {
                         </div>
                         <div class="tag-list">
                             <For
-                                each=all_tags
+                                each=move || all_tags.get()
                                 key=|tag| tag.clone()
-                                children=move |tag| {
-                                    view! {
-                                        <TagItem tag=tag />
-                                    }
-                                }
+                                children=move |tag| view! { <TagItem tag=tag /> }
                             />
                         </div>
                     </div>
@@ -87,100 +92,203 @@ pub fn Sidebar() -> impl IntoView {
             </nav>
 
             <div class="sidebar-footer">
-                <button class="btn btn-small btn-secondary" disabled=true title="Coming soon">
+                <button
+                    class="btn btn-small btn-secondary"
+                    disabled=move || state.saving.get()
+                    on:click=move |_| {
+                        if let Some(parent) = state.target_group() {
+                            modal.set(Some(GroupModal::Create { parent }));
+                        }
+                    }
+                >
                     "+ New Group"
                 </button>
+                {move || selected().map(|group| {
+                    let uuid = group.uuid;
+                    if group.is_recycle_bin {
+                        view! {
+                            <button
+                                class="btn btn-small btn-danger"
+                                disabled=move || state.saving.get()
+                                on:click=move |_| modal.set(Some(GroupModal::EmptyBin))
+                            >
+                                "Empty bin"
+                            </button>
+                        }.into_view()
+                    } else {
+                        let root = is_root(&group);
+                        view! {
+                            <button
+                                class="btn btn-small btn-secondary"
+                                disabled=move || state.saving.get()
+                                on:click=move |_| modal.set(Some(GroupModal::Edit(uuid)))
+                            >
+                                "Edit"
+                            </button>
+                            {(!root).then(|| view! {
+                                <button
+                                    class="btn btn-small btn-secondary"
+                                    disabled=move || state.saving.get()
+                                    on:click=move |_| modal.set(Some(GroupModal::Move(uuid)))
+                                >
+                                    "Move"
+                                </button>
+                                <button
+                                    class="btn btn-small btn-danger"
+                                    disabled=move || state.saving.get()
+                                    on:click=move |_| modal.set(Some(GroupModal::Delete(uuid)))
+                                >
+                                    "Delete"
+                                </button>
+                            })}
+                        }.into_view()
+                    }
+                })}
             </div>
+
+            {move || modal.get().map(|current| {
+                let close = Callback::new(move |_| modal.set(None));
+                match current {
+                    GroupModal::Create { parent } => view! {
+                        <GroupEditor parent=Some(parent) group=None on_close=close />
+                    }.into_view(),
+                    GroupModal::Edit(uuid) => view! {
+                        <GroupEditor parent=None group=Some(uuid) on_close=close />
+                    }.into_view(),
+                    GroupModal::Move(uuid) => {
+                        let name = state.group(uuid).map(|group| model::group_display_name(&group)).unwrap_or_default();
+                        let current = state.group(uuid).and_then(|group| group.parent);
+                        let excluded = state.groups.with_untracked(|groups| model::subtree(groups, uuid));
+                        view! {
+                            <GroupPicker
+                                title=format!("Move “{name}”")
+                                current=current
+                                excluded=excluded
+                                on_pick=move |parent| {
+                                    modal.set(None);
+                                    state.apply_or_report(Change::MoveGroup { uuid, parent });
+                                }
+                                on_close=close
+                            />
+                        }.into_view()
+                    }
+                    GroupModal::Delete(uuid) => {
+                        let Some(group) = state.group(uuid) else {
+                            return ().into_view();
+                        };
+                        let name = model::group_display_name(&group);
+                        let to_bin = !group.in_recycle_bin
+                            && state.meta.with_untracked(|meta| meta.as_ref().is_some_and(|meta| meta.recycle_bin_enabled));
+                        let message = if to_bin {
+                            format!("“{name}” and everything in it will move to the recycle bin.")
+                        } else {
+                            format!("“{name}” and everything in it will be deleted permanently when you save.")
+                        };
+                        view! {
+                            <ConfirmDialog
+                                title="Delete group?"
+                                message=message
+                                confirm_label={if to_bin { "Move to recycle bin" } else { "Delete permanently" }}
+                                on_confirm=move |_| {
+                                    modal.set(None);
+                                    if state.apply_or_report(Change::DeleteGroup { uuid }).is_some() {
+                                        state.selected_group.set(None);
+                                    }
+                                }
+                                on_close=close
+                            />
+                        }.into_view()
+                    }
+                    GroupModal::EmptyBin => view! {
+                        <ConfirmDialog
+                            title="Empty the recycle bin?"
+                            message="Everything in the recycle bin will be deleted permanently when you save."
+                            confirm_label="Empty recycle bin"
+                            on_confirm=move |_| {
+                                modal.set(None);
+                                state.apply_or_report(Change::EmptyRecycleBin);
+                            }
+                            on_close=close
+                        />
+                    }.into_view(),
+                }
+            })}
         </aside>
     }
 }
 
-/// A single group in the tree
 #[component]
-fn GroupTreeNode(group: GroupNode, depth: usize) -> impl IntoView {
-    let has_children = !group.children.is_empty();
-    let children = group.children.clone();
-
-    view! {
-        <div class="group-node">
-            <GroupItem
-                uuid=Some(group.uuid.clone())
-                name=group.name.clone()
-                depth=depth
-                has_children=has_children
-                is_tag=false
-            />
-            {if has_children {
-                let children = children.clone();
-                view! {
-                    <div class="group-children">
-                        <For
-                            each=move || children.clone()
-                            key=|child| child.uuid.clone()
-                            children=move |child| {
-                                view! {
-                                    <GroupTreeNode group=child depth=depth + 1 />
-                                }
-                            }
-                        />
-                    </div>
-                }.into_view()
-            } else {
-                view! { <span></span> }.into_view()
-            }}
-        </div>
-    }
-}
-
-/// A clickable group item
-#[component]
-fn GroupItem(
-    uuid: Option<String>,
-    name: String,
-    depth: usize,
-    has_children: bool,
-    #[prop(default = false)] is_tag: bool,
-) -> impl IntoView {
+fn AllEntriesItem() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let uuid_for_selected = uuid.clone();
-    let uuid_for_click = uuid.clone();
-
-    let indent = format!("padding-left: {}rem", depth as f32 * 1.0 + 0.5);
-
-    // Check if this item is selected (for groups, not tags)
-    let is_selected = move || {
-        !is_tag
-            && state.selected_group.get() == uuid_for_selected
-            && state.selected_tag.get().is_none()
-    };
-
+    let is_selected =
+        move || state.selected_group.get().is_none() && state.selected_tag.get().is_none();
     view! {
         <div
             class="group-item"
             class:selected=is_selected
-            style=indent
+            style="padding-left: 0.5rem"
             on:click=move |_| {
-                state.selected_group.set(uuid_for_click.clone());
+                state.selected_group.set(None);
                 state.selected_tag.set(None);
                 state.selected_entry.set(None);
+                state.editor.set(None);
             }
         >
             <span class="group-icon">
-                {if has_children {
-                    view! {
-                        <svg viewBox="0 0 24 24" width="16" height="16">
-                            <path fill="currentColor" d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
-                        </svg>
-                    }.into_view()
-                } else {
-                    view! {
-                        <svg viewBox="0 0 24 24" width="16" height="16">
-                            <path fill="currentColor" d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
-                        </svg>
-                    }.into_view()
-                }}
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                    <path fill="currentColor" d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
+                </svg>
             </span>
-            <span class="group-name">{name}</span>
+            <span class="group-name">"All Entries"</span>
+        </div>
+    }
+}
+
+/// A group and its children
+#[component]
+fn GroupTreeNode(
+    groups: std::rc::Rc<Vec<GroupView>>,
+    group: GroupView,
+    depth: usize,
+) -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let uuid = group.uuid;
+    let children: Vec<GroupView> = groups
+        .iter()
+        .filter(|child| child.parent == Some(uuid))
+        .cloned()
+        .collect();
+    let indent = format!("padding-left: {}rem", depth as f32 + 0.5);
+    let is_selected =
+        move || state.selected_group.get() == Some(uuid) && state.selected_tag.get().is_none();
+
+    view! {
+        <div class="group-node">
+            <div
+                class="group-item"
+                class:selected=is_selected
+                class:recycle-bin=group.is_recycle_bin
+                style=indent
+                title=group.notes.clone()
+                on:click=move |_| {
+                    state.selected_group.set(Some(uuid));
+                    state.selected_tag.set(None);
+                    state.selected_entry.set(None);
+                    state.editor.set(None);
+                }
+            >
+                <span class="group-icon">
+                    <KeepassIcon icon_id=group.icon_id custom_icon=group.custom_icon />
+                </span>
+                <span class="group-name">{model::group_display_name(&group)}</span>
+            </div>
+            {(!children.is_empty()).then(|| view! {
+                <div class="group-children">
+                    {children.into_iter().map(|child| view! {
+                        <GroupTreeNode groups=groups.clone() group=child depth=depth + 1 />
+                    }).collect_view()}
+                </div>
+            })}
         </div>
     }
 }
@@ -202,6 +310,7 @@ fn TagItem(tag: String) -> impl IntoView {
                 state.selected_tag.set(Some(tag_for_click.clone()));
                 state.selected_group.set(None);
                 state.selected_entry.set(None);
+                state.editor.set(None);
             }
         >
             <span class="group-icon tag-icon">
@@ -214,45 +323,109 @@ fn TagItem(tag: String) -> impl IntoView {
     }
 }
 
-/// Tree node for groups
-#[derive(Clone)]
-struct GroupNode {
-    uuid: String,
-    name: String,
-    children: Vec<GroupNode>,
-}
+/// Create a group under `parent`, or edit `group`.
+#[component]
+fn GroupEditor(
+    parent: Option<Uuid>,
+    group: Option<Uuid>,
+    #[prop(into)] on_close: Callback<()>,
+) -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let existing = group.and_then(|uuid| state.group(uuid));
+    let initial = existing
+        .as_ref()
+        .map(GroupView::to_edit)
+        .unwrap_or_else(|| GroupEdit {
+            icon_id: 48,
+            ..GroupEdit::default()
+        });
+    let title = match &existing {
+        Some(view) => format!("Edit “{}”", model::group_display_name(view)),
+        None => "New group".to_string(),
+    };
 
-/// Build a tree structure from flat group list
-fn build_group_tree(groups: &[GroupInfo]) -> Vec<GroupNode> {
-    use std::collections::HashMap;
+    let name = create_rw_signal(initial.name.clone());
+    let notes = create_rw_signal(initial.notes.clone());
+    let icon_id = create_rw_signal(initial.icon_id);
+    let custom_icon = create_rw_signal(initial.custom_icon);
+    let error = create_rw_signal(Option::<String>::None);
+    let initial = store_value(initial);
 
-    // Build a map of uuid -> GroupInfo
-    let group_map: HashMap<String, &GroupInfo> =
-        groups.iter().map(|g| (g.uuid.clone(), g)).collect();
-
-    // Find root groups (no parent or parent not in list)
-    let root_groups: Vec<&GroupInfo> = groups
-        .iter()
-        .filter(|g| g.parent.is_none() || !group_map.contains_key(g.parent.as_ref().unwrap()))
-        .collect();
-
-    // Recursively build tree
-    fn build_node(group: &GroupInfo, all_groups: &[GroupInfo]) -> GroupNode {
-        let children: Vec<GroupNode> = all_groups
-            .iter()
-            .filter(|g| g.parent.as_ref() == Some(&group.uuid))
-            .map(|g| build_node(g, all_groups))
-            .collect();
-
-        GroupNode {
-            uuid: group.uuid.clone(),
-            name: group.name.clone(),
-            children,
+    let submit = move || {
+        if name.get_untracked().trim().is_empty() {
+            error.set(Some("The group needs a name.".to_string()));
+            return;
         }
-    }
+        let edit = GroupEdit {
+            name: name.get_untracked(),
+            notes: notes.get_untracked(),
+            icon_id: icon_id.get_untracked(),
+            custom_icon: custom_icon.get_untracked(),
+            ..initial.get_value()
+        };
+        let change = match (group, parent) {
+            (Some(uuid), _) => Change::UpdateGroup { uuid, group: edit },
+            (None, Some(parent)) => Change::CreateGroup {
+                parent,
+                group: edit,
+            },
+            (None, None) => return,
+        };
+        match state.apply(change) {
+            Ok(outcome) => {
+                if let Some(created) = outcome.created {
+                    state.selected_group.set(Some(created));
+                    state.selected_tag.set(None);
+                    state.selected_entry.set(None);
+                }
+                on_close.call(());
+            }
+            Err(message) => error.set(Some(message)),
+        }
+    };
 
-    root_groups
-        .into_iter()
-        .map(|g| build_node(g, groups))
-        .collect()
+    view! {
+        <Dialog title=title on_close=on_close class="group-dialog">
+            <form on:submit=move |event| {
+                event.prevent_default();
+                submit();
+            }>
+                <div class="dialog-body">
+                    <div class="form-group">
+                        <label for="group-name">"Name"</label>
+                        <input
+                            id="group-name"
+                            type="text"
+                            class="form-input"
+                            autofocus=true
+                            prop:value=move || name.get()
+                            on:input=move |event| name.set(event_target_value(&event))
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="group-notes">"Notes"</label>
+                        <textarea
+                            id="group-notes"
+                            class="form-input form-textarea"
+                            prop:value=move || notes.get()
+                            on:input=move |event| notes.set(event_target_value(&event))
+                        ></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>"Icon"</label>
+                        <IconPicker icon_id=icon_id custom_icon=custom_icon />
+                    </div>
+                    <Show when=move || error.get().is_some()>
+                        <div class="error-message" role="alert">{move || error.get().unwrap_or_default()}</div>
+                    </Show>
+                </div>
+                <div class="dialog-footer">
+                    <button type="button" class="btn btn-secondary" on:click=move |_| on_close.call(())>"Cancel"</button>
+                    <button type="submit" class="btn btn-primary" disabled=move || state.saving.get()>
+                        {if group.is_some() { "Apply" } else { "Create" }}
+                    </button>
+                </div>
+            </form>
+        </Dialog>
+    }
 }

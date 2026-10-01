@@ -1,20 +1,14 @@
 //! File picker component with drag-and-drop support
 
 use leptos::*;
-use serde::Deserialize;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{DragEvent, Event, File, HtmlInputElement, Request, RequestInit, Response};
+use web_sys::{DragEvent, Event, File, HtmlInputElement};
 
+use crate::model::format_size;
+use crate::server::{self, StoredFile};
 use crate::state::{AppState, DatabaseSource, HelperStatus};
-
-#[derive(Clone, Deserialize)]
-struct StoredFile {
-    id: String,
-    name: String,
-    size: u64,
-}
+use crate::utils::files;
 
 /// File picker component
 #[component]
@@ -23,11 +17,11 @@ pub fn FilePicker() -> impl IntoView {
     let is_dragging = create_rw_signal(false);
     let file_input_ref = create_node_ref::<leptos::html::Input>();
     let stored_files = create_rw_signal(Vec::<StoredFile>::new());
-    let storage_loaded = create_rw_signal(!server_storage_enabled());
+    let storage_loaded = create_rw_signal(!server::storage_enabled());
 
-    if server_storage_enabled() {
+    if server::storage_enabled() {
         spawn_local(async move {
-            match list_stored_files().await {
+            match server::list_files().await {
                 Ok(files) => stored_files.set(files),
                 Err(error) => state.error_message.set(Some(error)),
             }
@@ -77,7 +71,7 @@ pub fn FilePicker() -> impl IntoView {
     view! {
         <section class="file-picker" aria-label="Open a vault">
             <div class="picker-column">
-                <Show when=server_storage_enabled>
+                <Show when=server::storage_enabled>
                     <section class="vault-library" aria-labelledby="vault-library-title">
                         <h2 id="vault-library-title" class="vault-library-title">"Vaults"</h2>
                         <Show
@@ -133,7 +127,7 @@ pub fn FilePicker() -> impl IntoView {
                 >
                     <p>"Drop a .kdbx file here or"</p>
                     <button class="btn btn-primary" type="button" on:click=open_file_dialog>
-                        {if server_storage_enabled() { "Upload database" } else { "Choose database" }}
+                        {if server::storage_enabled() { "Upload database" } else { "Choose database" }}
                     </button>
                     <input
                         type="file"
@@ -171,134 +165,36 @@ async fn handle_file_async(file: File, state: AppState) {
             .set(Some("Please select a .kdbx file".to_string()));
         return;
     }
-    if server_storage_enabled() {
-        if let Err(error) = upload_file(&file, &name).await {
-            state.error_message.set(Some(error));
-            return;
+    let source = if server::storage_enabled() {
+        // Once stored, an upload is a server vault like any other: saves replace it.
+        match server::create(&file, &name).await {
+            Ok(written) => DatabaseSource::Server {
+                id: written.id,
+                name: written.name,
+                revision: written.revision,
+            },
+            Err(error) => {
+                state.error_message.set(Some(error));
+                return;
+            }
         }
-    }
+    } else {
+        DatabaseSource::Local { name }
+    };
 
-    match JsFuture::from(file.array_buffer()).await {
-        Ok(array_buffer) => {
-            let data = js_sys::Uint8Array::new(&array_buffer).to_vec();
-            state.set_pending_file(data, DatabaseSource::Local { name });
-        }
-        Err(error) => {
-            log::error!("Failed to read file: {:?}", error);
-            state
-                .error_message
-                .set(Some("Failed to read file".to_string()));
-        }
+    match files::read_file(&file).await {
+        Ok(data) => state.set_pending_file(data, source),
+        Err(error) => state.error_message.set(Some(error)),
     }
-}
-
-async fn upload_file(file: &File, name: &str) -> Result<(), String> {
-    let encoded_name = js_sys::encode_uri_component(name);
-    let url = format!("/api/files/{encoded_name}");
-    let options = RequestInit::new();
-    options.set_method("PUT");
-    options.set_body(file.as_ref());
-    let request = Request::new_with_str_and_init(&url, &options)
-        .map_err(|_| "Failed to create the upload request".to_string())?;
-    let response = fetch_request(&request).await?;
-
-    match response.status() {
-        201 => Ok(()),
-        409 => Err(format!("A database named {name} already exists.")),
-        status => Err(format!(
-            "The server rejected the upload with HTTP {status}."
-        )),
-    }
-}
-
-async fn list_stored_files() -> Result<Vec<StoredFile>, String> {
-    let response = fetch_url("/api/files").await?;
-    if !response.ok() {
-        return Err(format!(
-            "Failed to list stored databases: HTTP {}.",
-            response.status()
-        ));
-    }
-    let value = JsFuture::from(
-        response
-            .json()
-            .map_err(|_| "Failed to read the database list".to_string())?,
-    )
-    .await
-    .map_err(|_| "Failed to read the database list".to_string())?;
-    serde_wasm_bindgen::from_value(value)
-        .map_err(|_| "The server returned an invalid database list".to_string())
 }
 
 async fn open_stored_file(id: String, name: String, state: AppState) {
     state.error_message.set(None);
-    let encoded_id = js_sys::encode_uri_component(&id);
-    let response = match fetch_url(&format!("/api/files/{encoded_id}")).await {
-        Ok(response) if response.ok() => response,
-        Ok(response) => {
-            state.error_message.set(Some(format!(
-                "Failed to download {name}: HTTP {}.",
-                response.status()
-            )));
-            return;
+    match server::download(&id, &name).await {
+        Ok((data, revision)) => {
+            state.set_pending_file(data, DatabaseSource::Server { id, name, revision })
         }
-        Err(error) => {
-            state.error_message.set(Some(error));
-            return;
-        }
-    };
-    let array_buffer = match response.array_buffer() {
-        Ok(promise) => match JsFuture::from(promise).await {
-            Ok(value) => value,
-            Err(_) => {
-                state
-                    .error_message
-                    .set(Some(format!("Failed to download {name}.")));
-                return;
-            }
-        },
-        Err(_) => {
-            state
-                .error_message
-                .set(Some(format!("Failed to download {name}.")));
-            return;
-        }
-    };
-    let data = js_sys::Uint8Array::new(&array_buffer).to_vec();
-    state.set_pending_file(data, DatabaseSource::Backend { path: id, name });
-}
-
-async fn fetch_url(url: &str) -> Result<Response, String> {
-    let window = web_sys::window().ok_or("No window object")?;
-    let value = JsFuture::from(window.fetch_with_str(url))
-        .await
-        .map_err(|_| "The KeePass server is unavailable".to_string())?;
-    value
-        .dyn_into()
-        .map_err(|_| "The server returned an invalid response".to_string())
-}
-
-async fn fetch_request(request: &Request) -> Result<Response, String> {
-    let window = web_sys::window().ok_or("No window object")?;
-    let value = JsFuture::from(window.fetch_with_request(request))
-        .await
-        .map_err(|_| "The KeePass server is unavailable".to_string())?;
-    value
-        .dyn_into()
-        .map_err(|_| "The server returned an invalid response".to_string())
-}
-
-fn server_storage_enabled() -> bool {
-    option_env!("KEEWEB_SERVER_STORAGE") == Some("1")
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{bytes} B")
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KiB", bytes as f64 / 1024.0)
-    } else {
-        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+        Err(error) => state.error_message.set(Some(error)),
     }
 }
 

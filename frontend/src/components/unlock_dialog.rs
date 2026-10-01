@@ -4,6 +4,7 @@ use leptos::spawn_local;
 use leptos::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
+use zeroize::Zeroizing;
 
 use crate::helper_client;
 use crate::state::{AppState, AppView, HelperStatus};
@@ -72,18 +73,13 @@ pub fn UnlockDialog() -> impl IntoView {
         }
     });
 
-    // Handle unlock attempt using Web Worker (non-blocking)
+    // Key derivation runs off the main thread or in the native helper.
     let try_unlock = move || {
         is_unlocking.set(true);
         error.set(None);
 
-        let pwd = password.get();
+        state.unlock(Zeroizing::new(password.get()), is_unlocking, error);
 
-        // Use async worker-based unlock to avoid blocking UI
-        // Pass the signals so the worker callback can update them directly
-        state.unlock_database_async(&pwd, is_unlocking, error);
-
-        // Clear password field immediately (it's already been sent to worker)
         password.set(String::new());
     };
 
@@ -95,8 +91,7 @@ pub fn UnlockDialog() -> impl IntoView {
 
     // Handle cancel
     let on_cancel = move |_| {
-        state.pending_file_data.set(None);
-        state.database_source.set(None);
+        state.pending.set(None);
         state.current_view.set(AppView::FilePicker);
     };
 
