@@ -5,6 +5,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{DragEvent, Event, File, HtmlInputElement};
 
+use crate::components::icons::{Icon, UiIcon};
 use crate::model::format_size;
 use crate::server::{self, StoredFile};
 use crate::state::{AppState, DatabaseSource, HelperStatus};
@@ -98,17 +99,15 @@ pub fn FilePicker() -> impl IntoView {
                                                 }
                                             >
                                                 <span class="vault-row-icon" aria-hidden="true">
-                                                    <svg viewBox="0 0 24 24" width="18" height="18">
-                                                        <path fill="currentColor" d="M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Zm-7-2a2 2 0 0 1 4 0v2h-4V6Zm3 10.73V18h-2v-1.27a2 2 0 1 1 2 0Z"/>
-                                                    </svg>
+                                                    <UiIcon icon=Icon::Database />
                                                 </span>
                                                 <span class="vault-row-copy">
                                                     <strong>{display_name}</strong>
                                                     <span>{format_size(file.size)}</span>
                                                 </span>
-                                                <svg class="vault-row-arrow" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                                                    <path fill="currentColor" d="m9.3 17.3 4.6-4.6a1 1 0 0 0 0-1.4L9.3 6.7l1.4-1.4 4.6 4.6a3 3 0 0 1 0 4.2l-4.6 4.6-1.4-1.4Z"/>
-                                                </svg>
+                                                <span class="vault-row-arrow">
+                                                    <UiIcon icon=Icon::ChevronRight />
+                                                </span>
                                             </button>
                                         }
                                     }).collect_view()}
@@ -125,6 +124,9 @@ pub fn FilePicker() -> impl IntoView {
                     on:dragleave=on_drag_leave
                     on:drop=on_drop
                 >
+                    <span class="drop-zone-icon" aria-hidden="true">
+                        <UiIcon icon=Icon::Upload size=20 />
+                    </span>
                     <p class="drop-hint">"Drop a .kdbx file here or"</p>
                     <button class="btn btn-primary" type="button" on:click=open_file_dialog>
                         {if server::storage_enabled() { "Upload database" } else { "Choose database" }}

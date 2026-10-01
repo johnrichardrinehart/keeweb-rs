@@ -5,7 +5,7 @@ use keeweb_wasm::document::{Change, MetaEdit};
 use leptos::*;
 
 use crate::components::dialog::Dialog;
-use crate::components::unlock_dialog::FingerprintIcon;
+use crate::components::icons::{Icon, UiIcon};
 use crate::quick_unlock::{self, Support};
 use crate::state::{AppState, save_idle_lock};
 
@@ -259,7 +259,7 @@ fn FingerprintSettings() -> impl IntoView {
                         on:click=set_up
                         disabled=move || busy.get()
                     >
-                        <FingerprintIcon />
+                        <UiIcon icon=Icon::Fingerprint size=16 />
                         "Set up fingerprint unlock"
                     </button>
                 }.into_view(),

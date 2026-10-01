@@ -4,7 +4,7 @@ use leptos::*;
 use uuid::Uuid;
 
 use crate::app::GroupsDrawer;
-use crate::components::icons::KeepassIcon;
+use crate::components::icons::{Icon, KeepassIcon, UiIcon};
 use crate::model::{self, USER_NAME};
 use crate::state::{AppState, EntryEditor};
 use keeweb_wasm::document::GroupView;
@@ -77,42 +77,67 @@ pub fn EntryList() -> impl IntoView {
             .unwrap_or_else(|| "All Entries".to_string())
     };
 
+    let count_label = move || {
+        let shown = rows.with(Vec::len);
+        let total = total.get();
+        if shown == total {
+            format!("{total} entries")
+        } else {
+            format!("{shown} of {total} entries")
+        }
+    };
+    // Narrow screens drop the count row, so the placeholder carries the count.
+    let placeholder = move || format!("Search {} entries", rows.with(Vec::len));
+    let groups_label = move || format!("Groups (showing {})", scope_label());
+
     view! {
         <div class="entry-list">
             <div class="entry-list-header">
-                <button
-                    class="btn btn-secondary groups-toggle"
-                    on:click=move |_| drawer.0.set(true)
-                    aria-label="Show groups"
-                >
-                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                        <path fill="currentColor" d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z"/>
-                    </svg>
-                    <span>{scope_label}</span>
-                </button>
-                <div class="search-box">
-                    <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18">
-                        <path fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-                    </svg>
-                    <input
-                        type="text"
-                        class="search-input"
-                        placeholder="Search entries..."
-                        prop:value=move || state.search_query.get()
-                        on:input=on_search
-                    />
+                <div class="entry-list-toolbar">
+                    <button
+                        type="button"
+                        class="btn btn-secondary groups-toggle"
+                        on:click=move |_| drawer.0.set(true)
+                        title=groups_label
+                        aria-label=groups_label
+                    >
+                        <UiIcon icon=Icon::Folder size=16 />
+                        <span class="groups-toggle-label" aria-hidden="true">{scope_label}</span>
+                    </button>
+                    <div class="search-box">
+                        <span class="search-icon">
+                            <UiIcon icon=Icon::Search size=16 />
+                        </span>
+                        <input
+                            type="text"
+                            class="search-input"
+                            placeholder=placeholder
+                            aria-label="Search entries"
+                            prop:value=move || state.search_query.get()
+                            on:input=on_search
+                        />
+                        <Show when=move || state.search_query.with(|query| !query.is_empty())>
+                            <span class="search-count" aria-hidden="true">
+                                {move || format!("{}/{}", rows.with(Vec::len), total.get())}
+                            </span>
+                        </Show>
+                    </div>
+                    <button
+                        type="button"
+                        class="btn btn-primary new-entry-button"
+                        title="New entry in the selected group"
+                        aria-label="New entry"
+                        disabled=move || state.saving.get() || state.groups.with(|groups| groups.is_empty())
+                        on:click=new_entry
+                    >
+                        <UiIcon icon=Icon::Plus />
+                        <span class="btn-label">"New"</span>
+                    </button>
                 </div>
-                <span class="entry-count">
-                    {move || {
-                        let shown = rows.with(Vec::len);
-                        let total = total.get();
-                        if shown == total {
-                            format!("{total} entries")
-                        } else {
-                            format!("{shown} of {total} entries")
-                        }
-                    }}
-                </span>
+                <div class="entry-list-meta">
+                    <span class="entry-scope">{scope_label}</span>
+                    <span class="entry-count">{count_label}</span>
+                </div>
             </div>
 
             <div class="entry-list-items">
@@ -131,26 +156,16 @@ pub fn EntryList() -> impl IntoView {
                     />
                 </Show>
             </div>
-
-            <div class="entry-list-footer">
-                <button
-                    class="btn btn-primary btn-small"
-                    disabled=move || state.saving.get() || state.groups.with(|groups| groups.is_empty())
-                    on:click=new_entry
-                >
-                    "+ New Entry"
-                </button>
-            </div>
         </div>
     }
 }
 
-/// A single entry in the list
+/// A single entry in the list: title, then username and group path on one line.
 #[component]
 fn EntryListItem(row: EntryRow) -> impl IntoView {
     let state = expect_context::<AppState>();
     let uuid = row.uuid;
-    let has_username = !row.username.is_empty();
+    let selected = move || state.selected_entry.get() == Some(uuid);
     let letter = row
         .title
         .chars()
@@ -158,37 +173,42 @@ fn EntryListItem(row: EntryRow) -> impl IntoView {
         .unwrap_or('?')
         .to_uppercase()
         .to_string();
+    let username = (!row.username.is_empty()).then(|| {
+        view! { <span class="entry-username">{row.username.clone()}</span> }
+    });
+    let path = (!row.path.is_empty()).then(|| {
+        view! {
+            <span class="entry-path">
+                <UiIcon icon=Icon::Folder size=12 />
+                {row.path.clone()}
+            </span>
+        }
+    });
+    let neither = username.is_none() && path.is_none();
     view! {
-        <div
+        <button
+            type="button"
             class="entry-item"
-            class:selected=move || state.selected_entry.get() == Some(uuid)
+            class:selected=selected
+            aria-current=move || selected().then_some("true")
+            title=row.title.clone()
             on:click=move |_| {
                 state.editor.set(None);
                 state.selected_entry.set(Some(uuid));
             }
         >
-            <div class="entry-icon">
+            <span class="entry-icon">
                 <KeepassIcon icon_id=row.icon_id custom_icon=row.custom_icon fallback=letter />
-            </div>
-            <div class="entry-info">
-                <div class="entry-title">{row.title}</div>
-                <div class="entry-username">
-                    {if has_username {
-                        view! { <span>{row.username}</span> }.into_view()
-                    } else {
-                        view! { <span class="no-username">"No username"</span> }.into_view()
-                    }}
-                </div>
-                {(!row.path.is_empty()).then(|| view! {
-                    <div class="entry-path" title=row.path.clone()>
-                        <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-                            <path fill="currentColor" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
-                        </svg>
-                        <span>{row.path.clone()}</span>
-                    </div>
-                })}
-            </div>
-        </div>
+            </span>
+            <span class="entry-info">
+                <span class="entry-title">{row.title}</span>
+                <span class="entry-sub">
+                    {username}
+                    {path}
+                    {neither.then(|| view! { <span class="no-username">"No username"</span> })}
+                </span>
+            </span>
+        </button>
     }
 }
 

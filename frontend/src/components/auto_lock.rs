@@ -4,6 +4,7 @@ use leptos::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
+use crate::components::icons::{Icon, UiIcon};
 use crate::state::AppState;
 
 /// Seconds the warning counts down before the lock.
@@ -149,10 +150,8 @@ pub fn AutoLock() -> impl IntoView {
         <Show when=move || show_warning.get()>
             <div class="auto-lock-overlay">
                 <div class="auto-lock-modal">
-                    <div class="auto-lock-icon">
-                        <svg viewBox="0 0 24 24" width="48" height="48">
-                            <path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
-                        </svg>
+                    <div class="auto-lock-icon" aria-hidden="true">
+                        <UiIcon icon=Icon::Lock size=28 />
                     </div>
                     <h2 class="auto-lock-title">"Locking soon..."</h2>
                     <p class="auto-lock-message">
@@ -166,7 +165,8 @@ pub fn AutoLock() -> impl IntoView {
                         <p class="auto-lock-message">"Unsaved changes will be saved first."</p>
                     </Show>
                     <button
-                        class="btn btn-primary auto-lock-button"
+                        type="button"
+                        class="btn btn-primary btn-lg auto-lock-button"
                         on:click=keep_alive
                     >
                         "Stay Unlocked"

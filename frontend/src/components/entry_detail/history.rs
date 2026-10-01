@@ -3,8 +3,9 @@
 use keeweb_wasm::document::{Change, EntryView};
 use leptos::*;
 
-use super::{DownloadIcon, EyeIcon, EyeOffIcon};
+use super::reveal_glyph;
 use crate::components::dialog::Dialog;
+use crate::components::icons::{Icon, UiIcon};
 use crate::model;
 use crate::state::AppState;
 use crate::utils::files;
@@ -92,15 +93,13 @@ pub fn HistoryViewer(entry: EntryView, #[prop(into)] on_close: Callback<()>) -> 
                                                 }}
                                                 {protected.then(|| view! {
                                                     <button
-                                                        class="btn-icon-small"
+                                                        type="button"
+                                                        class="btn-icon btn-icon-sm"
                                                         on:click=move |_| show_protected.update(|v| *v = !*v)
                                                         title=move || if show_protected.get() { "Hide" } else { "Show" }
+                                                        aria-label=move || if show_protected.get() { "Hide protected values" } else { "Show protected values" }
                                                     >
-                                                        {move || if show_protected.get() {
-                                                            view! { <EyeOffIcon /> }.into_view()
-                                                        } else {
-                                                            view! { <EyeIcon /> }.into_view()
-                                                        }}
+                                                        {reveal_glyph(move || show_protected.get())}
                                                     </button>
                                                 })}
                                             </div>
@@ -123,8 +122,10 @@ pub fn HistoryViewer(entry: EntryView, #[prop(into)] on_close: Callback<()>) -> 
                                                 <div class="history-field-value password-field">
                                                     <span>{name}" ("{model::format_size(attachment.size)}")"</span>
                                                     <button
-                                                        class="btn-icon-small"
+                                                        type="button"
+                                                        class="btn-icon btn-icon-sm"
                                                         title="Download"
+                                                        aria-label="Download"
                                                         on:click=move |_| {
                                                             let result = state
                                                                 .history_attachment(uuid, index, &name_for_download)
@@ -135,7 +136,7 @@ pub fn HistoryViewer(entry: EntryView, #[prop(into)] on_close: Callback<()>) -> 
                                                             }
                                                         }
                                                     >
-                                                        <DownloadIcon />
+                                                        <UiIcon icon=Icon::Download size=16 />
                                                     </button>
                                                 </div>
                                             }
@@ -150,17 +151,21 @@ pub fn HistoryViewer(entry: EntryView, #[prop(into)] on_close: Callback<()>) -> 
                                 </div>
                                 <div class="history-actions">
                                     <button
+                                        type="button"
                                         class="btn btn-primary"
                                         disabled=move || state.saving.get()
                                         on:click=move |_| restore(index)
                                     >
+                                        <UiIcon icon=Icon::Undo size=16 />
                                         "Restore this version"
                                     </button>
                                     <button
+                                        type="button"
                                         class="btn btn-danger"
                                         disabled=move || state.saving.get()
                                         on:click=move |_| delete(index)
                                     >
+                                        <UiIcon icon=Icon::Trash size=16 />
                                         "Delete version"
                                     </button>
                                 </div>

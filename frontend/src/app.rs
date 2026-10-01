@@ -12,6 +12,7 @@ use crate::components::{
     guard::{
         ChangesDialog, LockGuard, MergeConflicts, install_save_shortcut, install_unload_guard,
     },
+    icons::{Icon, UiIcon},
     sidebar::Sidebar,
     theme_toggle::ThemeToggle,
     unlock_dialog::UnlockDialog,
@@ -140,52 +141,51 @@ fn Header() -> impl IntoView {
                     <SaveControls />
                 </Show>
                 <span
-                    class="helper-pill"
-                    class:helper-pill-connected=move || state.helper_status.get() == HelperStatus::Connected
+                    class="helper-status"
+                    class:helper-status-connected=move || state.helper_status.get() == HelperStatus::Connected
                     aria-live="polite"
                 >
                     <span class="status-dot"></span>
-                    {move || match state.helper_status.get() {
-                        HelperStatus::Checking => "Checking helper",
-                        HelperStatus::Connected => "Native helper ready",
-                        HelperStatus::Unavailable => "Browser mode",
-                    }}
+                    <span class="helper-status-text">
+                        {move || match state.helper_status.get() {
+                            HelperStatus::Checking => "Checking helper",
+                            HelperStatus::Connected => "Native helper ready",
+                            HelperStatus::Unavailable => "Browser mode",
+                        }}
+                    </span>
                 </span>
-                <ThemeToggle />
-                <Show when=in_database>
-                    <button
-                        class="theme-toggle"
-                        on:click=move |_| state.show_settings.set(true)
-                        title="Database settings"
-                        aria-label="Database settings"
-                    >
-                        <svg viewBox="0 0 24 24" width="19" height="19">
-                            <path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41L9.25 5.35c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
-                        </svg>
-                    </button>
-                    <button
-                        class="btn btn-secondary btn-lock"
-                        on:click=move |_| state.show_picker()
-                        title="Show the vault picker; this vault stays unlocked in its tab"
-                        aria-label="Close vault"
-                    >
-                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                            <path fill="currentColor" d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59ZM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5a2 2 0 0 0-2-2Z"/>
-                        </svg>
-                        "Close"
-                    </button>
-                    <button
-                        class="btn btn-secondary btn-lock"
-                        on:click=move |_| state.request_lock()
-                        title="Lock this vault and forget its keys"
-                        aria-label="Lock vault"
-                    >
-                        <svg viewBox="0 0 24 24" width="16" height="16">
-                            <path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
-                        </svg>
-                        "Lock"
-                    </button>
-                </Show>
+                <div class="header-actions">
+                    <ThemeToggle />
+                    <Show when=in_database>
+                        <button
+                            type="button"
+                            class="btn-icon"
+                            on:click=move |_| state.show_settings.set(true)
+                            title="Database settings"
+                            aria-label="Database settings"
+                        >
+                            <UiIcon icon=Icon::Settings />
+                        </button>
+                        <button
+                            type="button"
+                            class="btn-icon"
+                            on:click=move |_| state.show_picker()
+                            title="Close vault (it stays unlocked in its tab)"
+                            aria-label="Close vault"
+                        >
+                            <UiIcon icon=Icon::LogOut />
+                        </button>
+                        <button
+                            type="button"
+                            class="btn-icon"
+                            on:click=move |_| state.request_lock()
+                            title="Lock this vault and forget its keys"
+                            aria-label="Lock vault"
+                        >
+                            <UiIcon icon=Icon::Lock />
+                        </button>
+                    </Show>
+                </div>
             </div>
         </header>
     }
@@ -198,8 +198,13 @@ fn VaultTabs() -> impl IntoView {
 
     view! {
         <Show when=move || state.tabs.with(|tabs| !tabs.is_empty())>
+            // Narrow screens hide the strip while the only unlocked vault is open: the
+            // header's close button already leads back to the picker.
             <nav
                 class="vault-tabs"
+                class:single-open=move || {
+                    state.tabs.with(|tabs| tabs.len() == 1) && state.active.with(Option::is_some)
+                }
                 aria-label="Unlocked vaults"
                 inert=move || state.view() == AppView::Unlock
             >
@@ -236,9 +241,7 @@ fn VaultTabs() -> impl IntoView {
                     aria-label="Open another vault"
                     on:click=move |_| state.show_picker()
                 >
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                        <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z"/>
-                    </svg>
+                    <UiIcon icon=Icon::Plus size=16 />
                 </button>
             </nav>
         </Show>
@@ -253,31 +256,32 @@ fn SaveControls() -> impl IntoView {
 
     view! {
         <div class="save-controls">
-            {move || {
-                if count() > 0 {
-                    view! {
-                        <button
-                            class="unsaved-pill"
-                            on:click=move |_| state.show_changes.set(true)
-                            title="Show unsaved changes"
-                        >
-                            {format!("{} unsaved", count())}
-                        </button>
-                    }.into_view()
-                } else {
-                    state.save_notice.get().map(|notice| view! {
-                        <span class="save-notice" role="status">{notice}</span>
-                    }).into_view()
-                }
-            }}
-            <button
-                class="btn btn-primary btn-save"
-                disabled=move || count() == 0 || state.saving.get()
-                on:click=move |_| state.save_in_background()
-                title="Save (Ctrl+S)"
-            >
-                {move || if state.saving.get() { "Saving…" } else { "Save" }}
-            </button>
+            {move || (count() == 0).then(|| state.save_notice.get().map(|notice| view! {
+                <span class="save-notice" role="status">{notice}</span>
+            }))}
+            <div class="save-split">
+                <button
+                    type="button"
+                    class="btn btn-primary btn-save"
+                    disabled=move || count() == 0 || state.saving.get()
+                    on:click=move |_| state.save_in_background()
+                    title="Save (Ctrl+S)"
+                >
+                    <UiIcon icon=Icon::Save size=16 />
+                    <span class="btn-label">{move || if state.saving.get() { "Saving…" } else { "Save" }}</span>
+                </button>
+                <Show when=move || count() != 0>
+                    <button
+                        type="button"
+                        class="btn btn-primary save-count"
+                        on:click=move |_| state.show_changes.set(true)
+                        title="Show unsaved changes"
+                        aria-label=move || format!("Show {} unsaved changes", count())
+                    >
+                        {count}
+                    </button>
+                </Show>
+            </div>
         </div>
     }
 }
@@ -317,15 +321,16 @@ fn DatabaseView() -> impl IntoView {
             </div>
             <Show when=move || state.error_message.get().is_some()>
                 <div class="toast toast-error" role="alert">
+                    <UiIcon icon=Icon::CircleAlert />
                     <span>{move || state.error_message.get().unwrap_or_default()}</span>
                     <button
-                        class="btn-icon"
+                        type="button"
+                        class="btn-icon btn-icon-sm"
                         on:click=move |_| state.error_message.set(None)
+                        title="Dismiss"
                         aria-label="Dismiss"
                     >
-                        <svg viewBox="0 0 24 24" width="18" height="18">
-                            <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                        </svg>
+                        <UiIcon icon=Icon::X size=16 />
                     </button>
                 </div>
             </Show>

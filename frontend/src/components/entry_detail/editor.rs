@@ -8,8 +8,8 @@ use leptos::*;
 use std::rc::Rc;
 use uuid::Uuid;
 
-use super::{AttachmentIcon, CloseIcon, DownloadIcon, EyeIcon, EyeOffIcon, GenerateIcon};
-use crate::components::icons::{IconPicker, KeepassIcon};
+use super::reveal_glyph;
+use crate::components::icons::{Icon, IconPicker, KeepassIcon, UiIcon};
 use crate::components::password_generator::PasswordGenerator;
 use crate::model::{self, NOTES, PASSWORD, STANDARD_FIELDS, TITLE, URL, USER_NAME};
 use crate::state::{AppState, EntryEditor};
@@ -384,6 +384,8 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                     type="button"
                     class="entry-detail-icon icon-button"
                     title="Change icon"
+                    aria-label="Change icon"
+                    aria-expanded=move || show_icons.get().to_string()
                     on:click=move |_| show_icons.update(|shown| *shown = !*shown)
                 >
                     {move || view! {
@@ -393,8 +395,15 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                 <div class="entry-detail-title-row">
                     <h2>{heading}</h2>
                 </div>
-                <button type="button" class="btn-icon" on:click=move |_| cancel() title="Cancel">
-                    <CloseIcon />
+                <button
+                    type="button"
+                    class="btn-icon panel-close"
+                    on:click=move |_| cancel()
+                    title="Cancel"
+                    aria-label="Cancel editing"
+                >
+                    <span class="panel-close-x"><UiIcon icon=Icon::X /></span>
+                    <span class="panel-close-back"><UiIcon icon=Icon::ArrowLeft /></span>
                 </button>
             </div>
 
@@ -409,41 +418,41 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                 <TextField label="Title" value=form.title />
                 <TextField label="Username" value=form.username />
                 <div class="field-group">
-                    <label>"Password"</label>
+                    <label for="editor-password">"Password"</label>
                     <div class="field-value-row">
                         <input
+                            id="editor-password"
                             type=move || if show_password.get() { "text" } else { "password" }
-                            class="field-input"
+                            class="field-input field-input-secret"
                             autocomplete="new-password"
                             prop:value=move || form.password.get()
                             on:input=move |event| form.password.set(event_target_value(&event))
                         />
                         <button
                             type="button"
-                            class="btn-icon"
+                            class="btn-icon btn-icon-sm"
                             on:click=move |_| show_password.update(|v| *v = !*v)
                             title=move || if show_password.get() { "Hide password" } else { "Show password" }
+                            aria-label=move || if show_password.get() { "Hide password" } else { "Show password" }
                         >
-                            {move || if show_password.get() {
-                                view! { <EyeOffIcon /> }.into_view()
-                            } else {
-                                view! { <EyeIcon /> }.into_view()
-                            }}
+                            {reveal_glyph(move || show_password.get())}
                         </button>
                         <button
                             type="button"
-                            class="btn-icon"
+                            class="btn-icon btn-icon-sm"
                             on:click=move |_| show_generator.set(true)
                             title="Generate password"
+                            aria-label="Generate password"
                         >
-                            <GenerateIcon />
+                            <UiIcon icon=Icon::RefreshCw size=16 />
                         </button>
                     </div>
                 </div>
                 <TextField label="URL" value=form.url />
                 <div class="field-group">
-                    <label>"Notes"</label>
+                    <label for="editor-notes">"Notes"</label>
                     <textarea
+                        id="editor-notes"
                         class="field-textarea"
                         prop:value=move || form.notes.get()
                         on:input=move |event| form.notes.set(event_target_value(&event))
@@ -464,6 +473,7 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                         <input
                             type="datetime-local"
                             class="field-input"
+                            aria-label="Expiry time"
                             prop:value=move || form.expiry.get()
                             on:input=move |event| form.expiry.set(event_target_value(&event))
                         />
@@ -471,40 +481,41 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                 </div>
 
                 <section class="editor-section">
-                    <h3 class="section-header">"Custom Fields"</h3>
+                    <h3 class="section-header">"Custom fields"</h3>
                     <p class="section-hint">"Store a TOTP setup as a field named “otp”."</p>
                     <For
                         each=move || form.custom.get()
                         key=|row| row.id
                         children=move |row| view! {
-                            <div class="editor-row">
+                            <div class="editor-row editor-field-row">
                                 <input
                                     type="text"
                                     class="field-input editor-key"
                                     placeholder="Name"
+                                    aria-label="Field name"
                                     prop:value=move || row.key.get()
                                     on:input=move |event| row.key.set(event_target_value(&event))
                                 />
-                                <input
-                                    type=move || if row.shown.get() { "text" } else { "password" }
-                                    class="field-input"
-                                    placeholder="Value"
-                                    autocomplete="off"
-                                    prop:value=move || row.value.get()
-                                    on:input=move |event| row.value.set(event_target_value(&event))
-                                />
-                                <button
-                                    type="button"
-                                    class="btn-icon"
-                                    on:click=move |_| row.shown.update(|v| *v = !*v)
-                                    title=move || if row.shown.get() { "Hide value" } else { "Show value" }
-                                >
-                                    {move || if row.shown.get() {
-                                        view! { <EyeOffIcon /> }.into_view()
-                                    } else {
-                                        view! { <EyeIcon /> }.into_view()
-                                    }}
-                                </button>
+                                <div class="field-value-row editor-value">
+                                    <input
+                                        type=move || if row.shown.get() { "text" } else { "password" }
+                                        class="field-input"
+                                        placeholder="Value"
+                                        aria-label="Field value"
+                                        autocomplete="off"
+                                        prop:value=move || row.value.get()
+                                        on:input=move |event| row.value.set(event_target_value(&event))
+                                    />
+                                    <button
+                                        type="button"
+                                        class="btn-icon btn-icon-sm"
+                                        on:click=move |_| row.shown.update(|v| *v = !*v)
+                                        title=move || if row.shown.get() { "Hide value" } else { "Show value" }
+                                        aria-label=move || if row.shown.get() { "Hide value" } else { "Show value" }
+                                    >
+                                        {reveal_glyph(move || row.shown.get())}
+                                    </button>
+                                </div>
                                 <label class="checkbox-label" title="Protect the value in memory and hide it by default">
                                     <input
                                         type="checkbox"
@@ -515,21 +526,23 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                                 </label>
                                 <button
                                     type="button"
-                                    class="btn-icon"
+                                    class="btn-icon btn-icon-sm"
                                     title="Remove field"
+                                    aria-label="Remove field"
                                     on:click=move |_| form.custom.update(|rows| rows.retain(|other| other.id != row.id))
                                 >
-                                    <CloseIcon />
+                                    <UiIcon icon=Icon::X size=16 />
                                 </button>
                             </div>
                         }
                     />
                     <button
                         type="button"
-                        class="btn btn-secondary btn-small"
+                        class="btn btn-secondary btn-sm"
                         on:click=move |_| form.add_field(String::new(), String::new(), false)
                     >
-                        "+ Add field"
+                        <UiIcon icon=Icon::Plus size=16 />
+                        "Add field"
                     </button>
                 </section>
 
@@ -548,7 +561,7 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                             };
                             view! {
                                 <div class="editor-row attachment-item">
-                                    <AttachmentIcon />
+                                    <UiIcon icon=Icon::Paperclip size=16 />
                                     <input
                                         type="text"
                                         class="field-input"
@@ -561,8 +574,9 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                                         EntryEditor::Edit(uuid) => view! {
                                             <button
                                                 type="button"
-                                                class="btn-icon"
+                                                class="btn-icon btn-icon-sm"
                                                 title="Download"
+                                                aria-label="Download"
                                                 on:click=move |_| {
                                                     let result = state
                                                         .attachment(uuid, &stored_name)
@@ -573,18 +587,19 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                                                     }
                                                 }
                                             >
-                                                <DownloadIcon />
+                                                <UiIcon icon=Icon::Download size=16 />
                                             </button>
                                         }.into_view(),
                                         EntryEditor::Create { .. } => ().into_view(),
                                     })}
                                     <button
                                         type="button"
-                                        class="btn-icon"
+                                        class="btn-icon btn-icon-sm"
                                         title="Remove attachment"
+                                        aria-label="Remove attachment"
                                         on:click=move |_| form.attachments.update(|rows| rows.retain(|other| other.id != id))
                                     >
-                                        <CloseIcon />
+                                        <UiIcon icon=Icon::X size=16 />
                                     </button>
                                 </div>
                             }
@@ -592,14 +607,15 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                     />
                     <button
                         type="button"
-                        class="btn btn-secondary btn-small"
+                        class="btn btn-secondary btn-sm"
                         on:click=move |_| {
                             if let Some(input) = attachment_input.get_untracked() {
                                 input.click();
                             }
                         }
                     >
-                        "+ Add files"
+                        <UiIcon icon=Icon::Plus size=16 />
+                        "Add files"
                     </button>
                     <input
                         type="file"
@@ -640,7 +656,7 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                         value=form.default_sequence
                         placeholder="{USERNAME}{TAB}{PASSWORD}{ENTER}"
                     />
-                    <label class="field-label">"Window associations"</label>
+                    <span class="field-label">"Window associations"</span>
                     <For
                         each=move || form.associations.get()
                         key=|row| row.id
@@ -650,6 +666,7 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                                     type="text"
                                     class="field-input"
                                     placeholder="Window title"
+                                    aria-label="Window title"
                                     prop:value=move || row.window.get()
                                     on:input=move |event| row.window.set(event_target_value(&event))
                                 />
@@ -657,26 +674,29 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                                     type="text"
                                     class="field-input"
                                     placeholder="Sequence (optional)"
+                                    aria-label="Sequence"
                                     prop:value=move || row.sequence.get()
                                     on:input=move |event| row.sequence.set(event_target_value(&event))
                                 />
                                 <button
                                     type="button"
-                                    class="btn-icon"
+                                    class="btn-icon btn-icon-sm"
                                     title="Remove association"
+                                    aria-label="Remove association"
                                     on:click=move |_| form.associations.update(|rows| rows.retain(|other| other.id != row.id))
                                 >
-                                    <CloseIcon />
+                                    <UiIcon icon=Icon::X size=16 />
                                 </button>
                             </div>
                         }
                     />
                     <button
                         type="button"
-                        class="btn btn-secondary btn-small"
+                        class="btn btn-secondary btn-sm"
                         on:click=move |_| form.add_association(String::new(), String::new())
                     >
-                        "+ Add window"
+                        <UiIcon icon=Icon::Plus size=16 />
+                        "Add window"
                     </button>
                 </section>
 
@@ -686,7 +706,6 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
             </div>
 
             <div class="entry-detail-footer">
-                <span class="footer-spacer"></span>
                 <button type="button" class="btn btn-secondary" on:click=move |_| cancel()>"Cancel"</button>
                 <button type="submit" class="btn btn-primary" disabled=move || state.saving.get()>
                     {match mode {
@@ -720,6 +739,7 @@ fn TextField(
                 type="text"
                 class="field-input"
                 placeholder=placeholder
+                aria-label=label
                 prop:value=move || value.get()
                 on:input=move |event| value.set(event_target_value(&event))
             />
@@ -733,10 +753,11 @@ fn ColorField(label: &'static str, value: RwSignal<String>) -> impl IntoView {
     view! {
         <div class="field-group">
             <label>{label}</label>
-            <div class="field-value-row">
+            <div class="color-row">
                 <input
                     type="color"
                     class="color-input"
+                    aria-label=label
                     prop:value=move || {
                         let color = value.get();
                         if color.len() == 7 && color.starts_with('#') {
@@ -754,7 +775,7 @@ fn ColorField(label: &'static str, value: RwSignal<String>) -> impl IntoView {
                     }}
                 </span>
                 <Show when=move || !value.get().is_empty()>
-                    <button type="button" class="btn btn-secondary btn-small" on:click=move |_| value.set(String::new())>
+                    <button type="button" class="btn btn-ghost btn-sm" on:click=move |_| value.set(String::new())>
                         "Reset"
                     </button>
                 </Show>

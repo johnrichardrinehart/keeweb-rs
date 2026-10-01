@@ -3,6 +3,7 @@
 use leptos::*;
 use uuid::Uuid;
 
+use crate::components::icons::{Icon, UiIcon};
 use crate::model;
 use crate::state::AppState;
 
@@ -31,22 +32,19 @@ pub fn Dialog(
             >
                 <div class="dialog-header">
                     <h2>{move || title.get()}</h2>
-                    <button type="button" class="dialog-close" on:click=move |_| on_close.call(()) aria-label="Close">
-                        <CloseIcon />
+                    <button
+                        type="button"
+                        class="btn-icon dialog-close"
+                        on:click=move |_| on_close.call(())
+                        title="Close"
+                        aria-label="Close"
+                    >
+                        <UiIcon icon=Icon::X />
                     </button>
                 </div>
                 {children()}
             </div>
         </div>
-    }
-}
-
-#[component]
-pub fn CloseIcon() -> impl IntoView {
-    view! {
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-        </svg>
     }
 }
 
@@ -66,7 +64,7 @@ pub fn ConfirmDialog(
             </div>
             <div class="dialog-footer">
                 <button type="button" class="btn btn-secondary" on:click=move |_| on_close.call(())>"Cancel"</button>
-                <button type="button" class="btn btn-danger" on:click=move |_| on_confirm.call(())>{confirm_label}</button>
+                <button type="button" class="btn btn-danger-solid" on:click=move |_| on_confirm.call(())>{confirm_label}</button>
             </div>
         </Dialog>
     }
@@ -113,11 +111,11 @@ pub fn GroupPicker(
                                 type="button"
                                 class="group-picker-row"
                                 class:selected=move || chosen.get() == Some(uuid)
-                                style=format!("padding-left: {}rem", 0.75 + depth as f32)
+                                style=format!("padding-left: {}px", 12 + depth * 20)
                                 disabled=disabled
                                 on:click=move |_| chosen.set(Some(uuid))
                             >
-                                <FolderIcon />
+                                <UiIcon icon=Icon::Folder size=16 />
                                 <span>{name}</span>
                             </button>
                         }
@@ -159,13 +157,4 @@ fn depth_of(groups: &[keeweb_wasm::document::GroupView], group: Uuid) -> usize {
             .and_then(|view| view.parent);
     }
     depth
-}
-
-#[component]
-pub fn FolderIcon() -> impl IntoView {
-    view! {
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <path fill="currentColor" d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
-        </svg>
-    }
 }

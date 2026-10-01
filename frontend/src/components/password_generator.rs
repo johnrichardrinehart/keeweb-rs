@@ -8,6 +8,7 @@ use leptos::*;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
 
+use crate::components::icons::{Icon, UiIcon};
 use crate::state::local_storage;
 use crate::utils::clipboard;
 
@@ -132,10 +133,14 @@ pub fn PasswordGenerator(
             >
                 <div class="dialog-header">
                     <h2 id="generator-title">"Generate Password"</h2>
-                    <button type="button" class="dialog-close" aria-label="Close" on:click=move |_| on_close.call(())>
-                        <svg viewBox="0 0 24 24" width="20" height="20">
-                            <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                        </svg>
+                    <button
+                        type="button"
+                        class="btn-icon dialog-close"
+                        title="Close"
+                        aria-label="Close"
+                        on:click=move |_| on_close.call(())
+                    >
+                        <UiIcon icon=Icon::X />
                     </button>
                 </div>
 
@@ -155,10 +160,14 @@ pub fn PasswordGenerator(
                             }.into_view(),
                         })}
                         <div class="password-actions">
-                            <button type="button" class="btn-icon" on:click=move |_| regenerate() title="Generate new" aria-label="Generate new">
-                                <svg viewBox="0 0 24 24" width="20" height="20">
-                                    <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                                </svg>
+                            <button
+                                type="button"
+                                class="btn-icon"
+                                on:click=move |_| regenerate()
+                                title="Generate new"
+                                aria-label="Generate new"
+                            >
+                                <UiIcon icon=Icon::RefreshCw />
                             </button>
                             <button type="button"
                                 class="btn-icon"
@@ -168,9 +177,10 @@ pub fn PasswordGenerator(
                                 title="Copy to clipboard"
                                 aria-label="Copy to clipboard"
                             >
-                                <svg viewBox="0 0 24 24" width="20" height="20">
-                                    <path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                                </svg>
+                                {move || {
+                                    let icon = if copied.get() { Icon::Check } else { Icon::Copy };
+                                    view! { <UiIcon icon=icon /> }
+                                }}
                             </button>
                         </div>
                     </div>
