@@ -2,7 +2,7 @@
 
 use keeweb_wasm::document::{Change, GroupEdit, GroupView};
 use leptos::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use uuid::Uuid;
 
 use crate::components::dialog::{ConfirmDialog, Dialog, GroupPicker};
@@ -55,6 +55,46 @@ pub fn Sidebar() -> impl IntoView {
             .with(|entries| entries.iter().find(|e| e.uuid == entry).map(|e| e.group))
     });
     provide_context(LocatedGroup(located));
+    // Start from the IsExpanded flags stored in the vault.
+    let collapsed = create_rw_signal(state.groups.with_untracked(|groups| {
+        groups
+            .iter()
+            .filter(|group| !group.is_expanded && group.parent.is_some())
+            .map(|group| group.uuid)
+            .collect::<HashSet<Uuid>>()
+    }));
+    provide_context(CollapsedGroups(collapsed));
+    // Expand the folders above the open entry so its folder stays visible.
+    create_effect(move |_| {
+        let Some(group) = located.get() else {
+            return;
+        };
+        let ancestors = state.groups.with_untracked(|groups| {
+            let mut found = Vec::new();
+            let mut current = groups
+                .iter()
+                .find(|g| g.uuid == group)
+                .and_then(|g| g.parent);
+            while let Some(uuid) = current {
+                found.push(uuid);
+                current = groups
+                    .iter()
+                    .find(|g| g.uuid == uuid)
+                    .and_then(|g| g.parent);
+                if found.len() > groups.len() {
+                    break;
+                }
+            }
+            found
+        });
+        if collapsed.with_untracked(|set| ancestors.iter().any(|uuid| set.contains(uuid))) {
+            collapsed.update(|set| {
+                ancestors.iter().for_each(|uuid| {
+                    set.remove(uuid);
+                })
+            });
+        }
+    });
 
     view! {
         <aside class="sidebar">
@@ -255,6 +295,10 @@ fn AllEntriesItem() -> impl IntoView {
 #[derive(Clone, Copy)]
 struct LocatedGroup(Memo<Option<Uuid>>);
 
+/// Folders the user collapsed in this view. View state only: it never edits the vault.
+#[derive(Clone, Copy)]
+struct CollapsedGroups(RwSignal<HashSet<Uuid>>);
+
 /// A group and its children
 #[component]
 fn GroupTreeNode(
@@ -269,7 +313,11 @@ fn GroupTreeNode(
         .filter(|child| child.parent == Some(uuid))
         .cloned()
         .collect();
-    let indent = format!("padding-left: {}rem", depth as f32 + 0.5);
+    // Leaf folders get the toggle's width as extra indent so names line up.
+    let indent = format!(
+        "padding-left: {}rem",
+        depth as f32 + if children.is_empty() { 1.6 } else { 0.5 }
+    );
     let located = expect_context::<LocatedGroup>().0;
     let is_located = move || located.get() == Some(uuid);
     let item_ref = create_node_ref::<html::Div>();
@@ -284,6 +332,8 @@ fn GroupTreeNode(
     });
     let is_selected =
         move || state.selected_group.get() == Some(uuid) && state.selected_tag.get().is_none();
+    let collapsed = expect_context::<CollapsedGroups>().0;
+    let is_collapsed = move || collapsed.with(|set| set.contains(&uuid));
 
     view! {
         <div class="group-node">
@@ -302,13 +352,35 @@ fn GroupTreeNode(
                     state.editor.set(None);
                 }
             >
+                {(!children.is_empty()).then(|| view! {
+                    <button
+                        type="button"
+                        class="group-toggle"
+                        class:collapsed=is_collapsed
+                        aria-label=move || if is_collapsed() { "Expand folder" } else { "Collapse folder" }
+                        aria-expanded=move || if is_collapsed() { "false" } else { "true" }
+                        on:click=move |event| {
+                            // Toggling does not select the folder.
+                            event.stop_propagation();
+                            collapsed.update(|set| {
+                                if !set.remove(&uuid) {
+                                    set.insert(uuid);
+                                }
+                            });
+                        }
+                    >
+                        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                            <path fill="currentColor" d="M8.6 16.6 13.2 12 8.6 7.4 10 6l6 6-6 6-1.4-1.4Z"/>
+                        </svg>
+                    </button>
+                })}
                 <span class="group-icon">
                     <KeepassIcon icon_id=group.icon_id custom_icon=group.custom_icon />
                 </span>
                 <span class="group-name">{model::group_display_name(&group)}</span>
             </div>
             {(!children.is_empty()).then(|| view! {
-                <div class="group-children">
+                <div class="group-children" class:hidden=is_collapsed>
                     {children.into_iter().map(|child| view! {
                         <GroupTreeNode groups=groups.clone() group=child depth=depth + 1 />
                     }).collect_view()}

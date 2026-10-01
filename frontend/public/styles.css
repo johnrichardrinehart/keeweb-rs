@@ -879,6 +879,35 @@ input {
     color: var(--color-primary);
 }
 
+.group-toggle {
+    display: grid;
+    place-items: center;
+    width: 1.1rem;
+    height: 1.1rem;
+    flex-shrink: 0;
+    padding: 0;
+    color: var(--color-text-muted);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    transform: rotate(90deg);
+    transition: transform var(--transition-fast);
+}
+
+.group-toggle.collapsed {
+    transform: none;
+}
+
+.group-toggle:hover {
+    color: var(--color-text);
+    background: var(--color-surface-hover);
+}
+
+.group-children.hidden {
+    display: none;
+}
+
 /* The group that holds the open entry. */
 .group-item.located {
     box-shadow: inset 3px 0 0 var(--color-primary);
