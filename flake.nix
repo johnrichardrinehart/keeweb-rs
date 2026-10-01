@@ -54,6 +54,17 @@
           pkg-config
           rustToolchain
         ];
+
+        helperConfig = pkgs.writeTextDir "config.toml" ''
+          [server]
+          host = "127.0.0.1"
+          port = 8081
+          cors_origin = "https://keepass.johnrinehart.dev"
+          argon2_enabled = true
+
+          [syncthing]
+          enabled = false
+        '';
       in {
         # Apply rust-overlay
         _module.args.pkgs = import nixpkgs {
@@ -95,6 +106,14 @@
               license = licenses.mit;
               mainProgram = "keeweb-server";
             };
+          };
+
+          keeweb-helper = pkgs.writeShellApplication {
+            name = "keeweb-helper";
+            text = ''
+              cd ${helperConfig}
+              exec ${lib.getExe self'.packages.keeweb-server}
+            '';
           };
 
           keeweb-wasm = pkgs.rustPlatform.buildRustPackage {
@@ -237,6 +256,11 @@
               ["--public-url /"]
               old.buildPhase;
           });
+        };
+
+        apps.helper = {
+          type = "app";
+          program = lib.getExe self'.packages.keeweb-helper;
         };
 
         # Development shell

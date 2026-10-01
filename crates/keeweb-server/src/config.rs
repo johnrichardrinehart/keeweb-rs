@@ -24,6 +24,8 @@ pub struct ServerConfig {
     pub tls_key: Option<String>,
     #[serde(default)]
     pub cors_origin: Option<String>,
+    #[serde(default = "default_true")]
+    pub argon2_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +74,7 @@ impl Default for ServerConfig {
             tls_cert: None,
             tls_key: None,
             cors_origin: None,
+            argon2_enabled: true,
         }
     }
 }

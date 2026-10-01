@@ -240,11 +240,8 @@ pub async fn check_helper_available_fresh() -> Result<bool, String> {
     }
 }
 
-/// Default helper server URL. Packaged deployments can set `KEEWEB_HELPER_URL`.
-pub const DEFAULT_HELPER_URL: &str = match option_env!("KEEWEB_HELPER_URL") {
-    Some(url) => url,
-    None => "http://127.0.0.1:8081",
-};
+/// Localhost endpoint for the optional native unlock helper.
+pub const DEFAULT_HELPER_URL: &str = "http://127.0.0.1:8081";
 
 /// Attempt to auto-connect to the default helper server
 /// Returns true if connection was successful

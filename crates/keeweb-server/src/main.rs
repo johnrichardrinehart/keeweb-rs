@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Started database directory watcher");
     }
 
-    // Build router
+    // Build router. Storage deployments can disable native key derivation.
     let mut app = Router::new()
         .route("/health", get(routes::health))
         .route("/api/files", get(routes::files::list_files))
@@ -60,10 +60,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/conflicts", get(routes::files::list_conflicts))
         .route("/api/events", get(routes::sse::events))
-        .route("/api/settings", get(routes::settings::get_settings))
-        .route("/api/argon2", post(routes::argon2::compute_argon2))
-        .with_state(state)
-        .layer(TraceLayer::new_for_http());
+        .route("/api/settings", get(routes::settings::get_settings));
+    if config.server.argon2_enabled {
+        app = app.route("/api/argon2", post(routes::argon2::compute_argon2));
+    }
+    let mut app = app.with_state(state).layer(TraceLayer::new_for_http());
     if let Some(origin) = &config.server.cors_origin {
         let origin = HeaderValue::from_str(origin)?;
         app = app.layer(
