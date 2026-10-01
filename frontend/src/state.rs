@@ -929,7 +929,8 @@ impl AppState {
     }
 
     /// Get filtered entries based on search query, selected group, or selected tag.
-    /// Entries in the recycle bin only show while a recycle bin group is selected.
+    /// Entries in the recycle bin only show while a recycle bin group is selected. A search
+    /// covers the selected group and every group below it.
     pub fn filtered_entries(&self) -> Vec<EntryView> {
         let query = self.search_query.get().to_lowercase();
         let selected_group = self.selected_group.get();
@@ -937,6 +938,15 @@ impl AppState {
         let bin_selected = selected_group
             .and_then(|uuid| self.group(uuid))
             .is_some_and(|group| group.is_recycle_bin || group.in_recycle_bin);
+        // Browsing lists a folder's own entries; a search also covers its subfolders.
+        let scope: Option<Vec<Uuid>> = selected_group.map(|group| {
+            if query.is_empty() {
+                vec![group]
+            } else {
+                self.groups
+                    .with(|groups| crate::model::subtree(groups, group))
+            }
+        });
 
         let mut filtered: Vec<EntryView> = self.entries.with(|entries| {
             entries
@@ -946,8 +956,8 @@ impl AppState {
                         if !entry.tags.contains(tag) {
                             return false;
                         }
-                    } else if let Some(group) = selected_group {
-                        if entry.group != group {
+                    } else if let Some(groups) = &scope {
+                        if !groups.contains(&entry.group) {
                             return false;
                         }
                     }
