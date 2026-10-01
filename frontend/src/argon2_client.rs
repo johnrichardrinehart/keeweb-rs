@@ -43,7 +43,7 @@ impl Argon2Client {
         let location = window.location();
         let origin = location.origin()?;
 
-        let worker_url = format!("{}/argon2-pthread/build/worker.min.js", origin);
+        let worker_url = format!("{}/argon2-pthread/build/worker.js", origin);
         log::debug!("Loading argon2-pthread worker from: {}", worker_url);
 
         let worker = Worker::new(&worker_url)?;

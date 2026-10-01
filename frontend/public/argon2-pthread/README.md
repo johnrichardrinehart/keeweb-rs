@@ -10,7 +10,7 @@ Argon2i, Argon2d, and Argon2id are all supported. If unsure, Argon2i is recommen
 This library zeroes all memory used by default, but it is still required that users of this library understand and implement secure memory handling for returned data. Hash output should be zeroed a minimum of 3 times after use.
 
 ## Web Worker
-**These bindings are called entirely by channel-based communication with a Web Worker.** The compiled code for this worker is located in build/worker.js (and build/worker.min.js for production), these files must be self-hosted at a path *on the origin where argon2 will be used.* It may be desired to deliver a Content-Security-Policy header along with the script, as no CSP from the origin is enforced by default for Web Workers.
+**These bindings are called entirely by channel-based communication with a Web Worker.** The compiled code for this worker is located in build/worker.js, these files must be self-hosted at a path *on the origin where argon2 will be used.* It may be desired to deliver a Content-Security-Policy header along with the script, as no CSP from the origin is enforced by default for Web Workers.
 
 ### Errors
 The web worker will never return an error through anything other than a standard message. To check if a message is an error, check if the `code` property is not equal to 0. Non-zero codes correspond to different errors, most of which are identical to argon2 upstream. See the `ErrorCodes` enum for details.
@@ -22,7 +22,7 @@ import { makeSalt, base64 } from 'cs-crypto'
 
 // 1. Open a connection to a new argon2 worker thread
 const argon2 = new Argon2.WorkerConnection(
-  new Worker('/argon2/worker.js') // Change to worker.min.js in production
+  new Worker('/argon2/worker.js')
 )
 
 // 2. Load the Argon2 WebAssembly

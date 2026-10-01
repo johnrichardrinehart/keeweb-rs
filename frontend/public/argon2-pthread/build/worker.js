@@ -259,12 +259,7 @@ async function simdSupported(wasmRoot = '.') {
 function pthreadSupported() {
     return typeof SharedArrayBuffer !== 'undefined';
 }
-async function loadArgon2(wasmRoot = '.', simd = false, pthread = false) {
-    if (typeof WebAssembly !== 'object') {
-        throw Argon2.ErrorCodes.ARGON2WASM_UNSUPPORTED_BROWSER;
-    }
-    simd && (simd = await simdSupported(wasmRoot));
-    pthread && (pthread = pthreadSupported());
+async function loadArgon2(wasmRoot, simd, pthread, poolSize) {
     if (pthread) {
         const file = `argon2${simd ? '-simd' : ''}-pthread.js`;
         const url = `${wasmRoot}/${file}`;
@@ -278,7 +273,8 @@ async function loadArgon2(wasmRoot = '.', simd = false, pthread = false) {
         });
         const exports = await LoadArgon2Wasm({
             mainScriptUrlOrBlob: url,
-            wasmMemory
+            wasmMemory,
+            pthreadPoolSize: poolSize
         });
         return {
             malloc: exports._malloc,
@@ -286,7 +282,9 @@ async function loadArgon2(wasmRoot = '.', simd = false, pthread = false) {
             argon2i_hash_raw: exports._argon2i_hash_raw,
             argon2d_hash_raw: exports._argon2d_hash_raw,
             argon2id_hash_raw: exports._argon2id_hash_raw,
-            memory: wasmMemory
+            memory: wasmMemory,
+            pthread: true,
+            poolSize
         };
     }
     else {
@@ -361,6 +359,42 @@ function hash(params) {
         body: hash
     };
 }
+
+// Load options from the LoadArgon2 request. The module itself loads on the
+// first hash, when the lane count is known.
+let loadOptions;
+
+// Emscripten pre-creates its pthread pool when the module loads. A thread
+// that is not in the pool cannot start while the hashing thread blocks, and
+// Argon2 runs one thread per lane that must all meet at each slice barrier.
+// A pool smaller than the lane count therefore hangs forever. Browsers such as
+// Brave report a randomized navigator.hardwareConcurrency, so size the pool
+// from the lanes as well.
+async function ensureArgon2(lanes) {
+    const poolSize = Math.max(navigator.hardwareConcurrency || 1, lanes || 1);
+    if (argon2 && (!argon2.pthread || argon2.poolSize >= poolSize)) {
+        return;
+    }
+    argon2 = await loadArgon2(loadOptions.wasmRoot, loadOptions.simd, loadOptions.pthread, poolSize);
+}
+
+async function hashRequest(params, mode) {
+    try {
+        if (mode !== undefined) {
+            params.mode = mode;
+        }
+        await ensureArgon2(params.threads);
+        const result = hash(params);
+        postMessage({
+            code: result.code,
+            body: result.body
+        }, [result.body.buffer]);
+    }
+    catch (err) {
+        postError(err);
+    }
+}
+
 onmessage = async function (evt) {
     if (Array.isArray(evt.data) || typeof evt.data !== 'object') {
         postMessage({
@@ -372,7 +406,14 @@ onmessage = async function (evt) {
         case Argon2.Methods.LoadArgon2:
             try {
                 const params = req.params;
-                argon2 = await loadArgon2(params.wasmRoot, params.simd, params.pthread);
+                if (typeof WebAssembly !== 'object') {
+                    throw Argon2.ErrorCodes.ARGON2WASM_UNSUPPORTED_BROWSER;
+                }
+                loadOptions = {
+                    wasmRoot: params.wasmRoot,
+                    simd: params.simd && await simdSupported(params.wasmRoot),
+                    pthread: params.pthread && pthreadSupported()
+                };
             }
             catch (err) {
                 postError(err);
@@ -383,47 +424,16 @@ onmessage = async function (evt) {
             });
             break;
         case Argon2.Methods.Hash:
-            {
-                const params = req.params;
-                const result = hash(params);
-                postMessage({
-                    code: result.code,
-                    body: result.body
-                }, [result.body.buffer]);
-            }
+            await hashRequest(req.params);
             break;
         case Argon2.Methods.Hash2i:
-            {
-                const params = req.params;
-                params.mode = Argon2.Modes.Argon2i;
-                const result = hash(params);
-                postMessage({
-                    code: result.code,
-                    body: result.body
-                }, [result.body.buffer]);
-            }
+            await hashRequest(req.params, Argon2.Modes.Argon2i);
             break;
         case Argon2.Methods.Hash2d:
-            {
-                const params = req.params;
-                params.mode = Argon2.Modes.Argon2d;
-                const result = hash(params);
-                postMessage({
-                    code: result.code,
-                    body: result.body
-                }, [result.body.buffer]);
-            }
+            await hashRequest(req.params, Argon2.Modes.Argon2d);
             break;
         case Argon2.Methods.Hash2id:
-            {
-                const params = req.params;
-                params.mode = Argon2.Modes.Argon2id;
-                const result = hash(params);
-                postMessage({
-                    code: result.code,
-                    body: result.body
-                }, [result.body.buffer]);
-            }
+            await hashRequest(req.params, Argon2.Modes.Argon2id);
             break;
         default:
             postMessage({
