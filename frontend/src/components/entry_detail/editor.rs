@@ -415,290 +415,297 @@ pub fn EntryEditorPanel(mode: EntryEditor) -> impl IntoView {
                     </section>
                 </Show>
 
-                <TextField label="Title" value=form.title />
-                <TextField label="Username" value=form.username />
-                <div class="field-group">
-                    <label for="editor-password">"Password"</label>
-                    <div class="field-value-row">
-                        <input
-                            id="editor-password"
-                            type=move || if show_password.get() { "text" } else { "password" }
-                            class="field-input field-input-secret"
-                            autocomplete="new-password"
-                            prop:value=move || form.password.get()
-                            on:input=move |event| form.password.set(event_target_value(&event))
-                        />
-                        <button
-                            type="button"
-                            class="btn-icon btn-icon-sm"
-                            on:click=move |_| show_password.update(|v| *v = !*v)
-                            title=move || if show_password.get() { "Hide password" } else { "Show password" }
-                            aria-label=move || if show_password.get() { "Hide password" } else { "Show password" }
-                        >
-                            {reveal_glyph(move || show_password.get())}
-                        </button>
-                        <button
-                            type="button"
-                            class="btn-icon btn-icon-sm"
-                            on:click=move |_| show_generator.set(true)
-                            title="Generate password"
-                            aria-label="Generate password"
-                        >
-                            <UiIcon icon=Icon::RefreshCw size=16 />
-                        </button>
-                    </div>
-                </div>
-                <TextField label="URL" value=form.url />
-                <div class="field-group">
-                    <label for="editor-notes">"Notes"</label>
-                    <textarea
-                        id="editor-notes"
-                        class="field-textarea"
-                        prop:value=move || form.notes.get()
-                        on:input=move |event| form.notes.set(event_target_value(&event))
-                    ></textarea>
-                </div>
-                <TextField label="Tags" value=form.tags placeholder="Comma-separated" />
-
-                <div class="field-group">
-                    <label class="checkbox-label">
-                        <input
-                            type="checkbox"
-                            prop:checked=move || form.expires.get()
-                            on:change=move |event| form.expires.set(event_target_checked(&event))
-                        />
-                        "Expires"
-                    </label>
-                    <Show when=move || form.expires.get()>
-                        <input
-                            type="datetime-local"
-                            class="field-input"
-                            aria-label="Expiry time"
-                            prop:value=move || form.expiry.get()
-                            on:input=move |event| form.expiry.set(event_target_value(&event))
-                        />
-                    </Show>
-                </div>
-
-                <section class="editor-section">
-                    <h3 class="section-header">"Custom fields"</h3>
-                    <p class="section-hint">"Store a TOTP setup as a field named “otp”."</p>
-                    <For
-                        each=move || form.custom.get()
-                        key=|row| row.id
-                        children=move |row| view! {
-                            <div class="editor-row editor-field-row">
+                <div class="detail-columns">
+                    <div class="detail-column">
+                        <TextField label="Title" value=form.title />
+                        <TextField label="Username" value=form.username />
+                        <div class="field-group">
+                            <label for="editor-password">"Password"</label>
+                            <div class="field-value-row">
                                 <input
-                                    type="text"
-                                    class="field-input editor-key"
-                                    placeholder="Name"
-                                    aria-label="Field name"
-                                    prop:value=move || row.key.get()
-                                    on:input=move |event| row.key.set(event_target_value(&event))
+                                    id="editor-password"
+                                    type=move || if show_password.get() { "text" } else { "password" }
+                                    class="field-input field-input-secret"
+                                    autocomplete="new-password"
+                                    prop:value=move || form.password.get()
+                                    on:input=move |event| form.password.set(event_target_value(&event))
                                 />
-                                <div class="field-value-row editor-value">
-                                    <input
-                                        type=move || if row.shown.get() { "text" } else { "password" }
-                                        class="field-input"
-                                        placeholder="Value"
-                                        aria-label="Field value"
-                                        autocomplete="off"
-                                        prop:value=move || row.value.get()
-                                        on:input=move |event| row.value.set(event_target_value(&event))
-                                    />
-                                    <button
-                                        type="button"
-                                        class="btn-icon btn-icon-sm"
-                                        on:click=move |_| row.shown.update(|v| *v = !*v)
-                                        title=move || if row.shown.get() { "Hide value" } else { "Show value" }
-                                        aria-label=move || if row.shown.get() { "Hide value" } else { "Show value" }
-                                    >
-                                        {reveal_glyph(move || row.shown.get())}
-                                    </button>
-                                </div>
-                                <label class="checkbox-label" title="Protect the value in memory and hide it by default">
-                                    <input
-                                        type="checkbox"
-                                        prop:checked=move || row.protected.get()
-                                        on:change=move |event| row.protected.set(event_target_checked(&event))
-                                    />
-                                    "Protected"
-                                </label>
                                 <button
                                     type="button"
                                     class="btn-icon btn-icon-sm"
-                                    title="Remove field"
-                                    aria-label="Remove field"
-                                    on:click=move |_| form.custom.update(|rows| rows.retain(|other| other.id != row.id))
+                                    on:click=move |_| show_password.update(|v| *v = !*v)
+                                    title=move || if show_password.get() { "Hide password" } else { "Show password" }
+                                    aria-label=move || if show_password.get() { "Hide password" } else { "Show password" }
                                 >
-                                    <UiIcon icon=Icon::X size=16 />
+                                    {reveal_glyph(move || show_password.get())}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn-icon btn-icon-sm"
+                                    on:click=move |_| show_generator.set(true)
+                                    title="Generate password"
+                                    aria-label="Generate password"
+                                >
+                                    <UiIcon icon=Icon::RefreshCw size=16 />
                                 </button>
                             </div>
-                        }
-                    />
-                    <button
-                        type="button"
-                        class="btn btn-secondary btn-sm"
-                        on:click=move |_| form.add_field(String::new(), String::new(), false)
-                    >
-                        <UiIcon icon=Icon::Plus size=16 />
-                        "Add field"
-                    </button>
-                </section>
+                        </div>
+                        <TextField label="URL" value=form.url />
+                        <div class="field-group">
+                            <label for="editor-notes">"Notes"</label>
+                            <textarea
+                                id="editor-notes"
+                                class="field-textarea"
+                                prop:value=move || form.notes.get()
+                                on:input=move |event| form.notes.set(event_target_value(&event))
+                            ></textarea>
+                        </div>
+                    </div>
 
-                <section class="editor-section">
-                    <h3 class="section-header">"Attachments"</h3>
-                    <For
-                        each=move || form.attachments.get()
-                        key=|row| row.id
-                        children=move |row| {
-                            let id = row.id;
-                            let (size, download) = match &row.source {
-                                AttachmentSource::Existing { stored_name, size } => {
-                                    (*size, Some(stored_name.clone()))
-                                }
-                                AttachmentSource::New(bytes) => (bytes.len() as u64, None),
-                            };
-                            view! {
-                                <div class="editor-row attachment-item">
-                                    <UiIcon icon=Icon::Paperclip size=16 />
-                                    <input
-                                        type="text"
-                                        class="field-input"
-                                        aria-label="Attachment name"
-                                        prop:value=move || row.name.get()
-                                        on:input=move |event| row.name.set(event_target_value(&event))
-                                    />
-                                    <span class="attachment-size">{model::format_size(size)}</span>
-                                    {download.map(|stored_name| match mode {
-                                        EntryEditor::Edit(uuid) => view! {
+                    <div class="detail-column">
+                        <TextField label="Tags" value=form.tags placeholder="Comma-separated" />
+
+                        <div class="field-group">
+                            <label class="checkbox-label">
+                                <input
+                                    type="checkbox"
+                                    prop:checked=move || form.expires.get()
+                                    on:change=move |event| form.expires.set(event_target_checked(&event))
+                                />
+                                "Expires"
+                            </label>
+                            <Show when=move || form.expires.get()>
+                                <input
+                                    type="datetime-local"
+                                    class="field-input"
+                                    aria-label="Expiry time"
+                                    prop:value=move || form.expiry.get()
+                                    on:input=move |event| form.expiry.set(event_target_value(&event))
+                                />
+                            </Show>
+                        </div>
+
+                        <section class="editor-section">
+                            <h3 class="section-header">"Custom fields"</h3>
+                            <p class="section-hint">"Store a TOTP setup as a field named “otp”."</p>
+                            <For
+                                each=move || form.custom.get()
+                                key=|row| row.id
+                                children=move |row| view! {
+                                    <div class="editor-row editor-field-row">
+                                        <input
+                                            type="text"
+                                            class="field-input editor-key"
+                                            placeholder="Name"
+                                            aria-label="Field name"
+                                            prop:value=move || row.key.get()
+                                            on:input=move |event| row.key.set(event_target_value(&event))
+                                        />
+                                        <div class="field-value-row editor-value">
+                                            <input
+                                                type=move || if row.shown.get() { "text" } else { "password" }
+                                                class="field-input"
+                                                placeholder="Value"
+                                                aria-label="Field value"
+                                                autocomplete="off"
+                                                prop:value=move || row.value.get()
+                                                on:input=move |event| row.value.set(event_target_value(&event))
+                                            />
                                             <button
                                                 type="button"
                                                 class="btn-icon btn-icon-sm"
-                                                title="Download"
-                                                aria-label="Download"
-                                                on:click=move |_| {
-                                                    let result = state
-                                                        .attachment(uuid, &stored_name)
-                                                        .ok_or_else(|| "Attachment not found.".to_string())
-                                                        .and_then(|bytes| files::download_bytes(&stored_name, &bytes));
-                                                    if let Err(message) = result {
-                                                        error.set(Some(message));
-                                                    }
-                                                }
+                                                on:click=move |_| row.shown.update(|v| *v = !*v)
+                                                title=move || if row.shown.get() { "Hide value" } else { "Show value" }
+                                                aria-label=move || if row.shown.get() { "Hide value" } else { "Show value" }
                                             >
-                                                <UiIcon icon=Icon::Download size=16 />
+                                                {reveal_glyph(move || row.shown.get())}
                                             </button>
-                                        }.into_view(),
-                                        EntryEditor::Create { .. } => ().into_view(),
-                                    })}
-                                    <button
-                                        type="button"
-                                        class="btn-icon btn-icon-sm"
-                                        title="Remove attachment"
-                                        aria-label="Remove attachment"
-                                        on:click=move |_| form.attachments.update(|rows| rows.retain(|other| other.id != id))
-                                    >
-                                        <UiIcon icon=Icon::X size=16 />
-                                    </button>
-                                </div>
-                            }
-                        }
-                    />
-                    <button
-                        type="button"
-                        class="btn btn-secondary btn-sm"
-                        on:click=move |_| {
-                            if let Some(input) = attachment_input.get_untracked() {
-                                input.click();
-                            }
-                        }
-                    >
-                        <UiIcon icon=Icon::Plus size=16 />
-                        "Add files"
-                    </button>
-                    <input
-                        type="file"
-                        multiple=true
-                        class="visually-hidden"
-                        node_ref=attachment_input
-                        on:change=on_add_files
-                    />
-                </section>
+                                        </div>
+                                        <label class="checkbox-label" title="Protect the value in memory and hide it by default">
+                                            <input
+                                                type="checkbox"
+                                                prop:checked=move || row.protected.get()
+                                                on:change=move |event| row.protected.set(event_target_checked(&event))
+                                            />
+                                            "Protected"
+                                        </label>
+                                        <button
+                                            type="button"
+                                            class="btn-icon btn-icon-sm"
+                                            title="Remove field"
+                                            aria-label="Remove field"
+                                            on:click=move |_| form.custom.update(|rows| rows.retain(|other| other.id != row.id))
+                                        >
+                                            <UiIcon icon=Icon::X size=16 />
+                                        </button>
+                                    </div>
+                                }
+                            />
+                            <button
+                                type="button"
+                                class="btn btn-secondary btn-sm"
+                                on:click=move |_| form.add_field(String::new(), String::new(), false)
+                            >
+                                <UiIcon icon=Icon::Plus size=16 />
+                                "Add field"
+                            </button>
+                        </section>
 
-                <section class="editor-section">
-                    <h3 class="section-header">"Appearance"</h3>
-                    <ColorField label="Text color" value=form.foreground />
-                    <ColorField label="Background color" value=form.background />
-                    <TextField label="Override URL" value=form.override_url placeholder="e.g. cmd://…" />
-                </section>
+                        <section class="editor-section">
+                            <h3 class="section-header">"Attachments"</h3>
+                            <For
+                                each=move || form.attachments.get()
+                                key=|row| row.id
+                                children=move |row| {
+                                    let id = row.id;
+                                    let (size, download) = match &row.source {
+                                        AttachmentSource::Existing { stored_name, size } => {
+                                            (*size, Some(stored_name.clone()))
+                                        }
+                                        AttachmentSource::New(bytes) => (bytes.len() as u64, None),
+                                    };
+                                    view! {
+                                        <div class="editor-row attachment-item">
+                                            <UiIcon icon=Icon::Paperclip size=16 />
+                                            <input
+                                                type="text"
+                                                class="field-input"
+                                                aria-label="Attachment name"
+                                                prop:value=move || row.name.get()
+                                                on:input=move |event| row.name.set(event_target_value(&event))
+                                            />
+                                            <span class="attachment-size">{model::format_size(size)}</span>
+                                            {download.map(|stored_name| match mode {
+                                                EntryEditor::Edit(uuid) => view! {
+                                                    <button
+                                                        type="button"
+                                                        class="btn-icon btn-icon-sm"
+                                                        title="Download"
+                                                        aria-label="Download"
+                                                        on:click=move |_| {
+                                                            let result = state
+                                                                .attachment(uuid, &stored_name)
+                                                                .ok_or_else(|| "Attachment not found.".to_string())
+                                                                .and_then(|bytes| files::download_bytes(&stored_name, &bytes));
+                                                            if let Err(message) = result {
+                                                                error.set(Some(message));
+                                                            }
+                                                        }
+                                                    >
+                                                        <UiIcon icon=Icon::Download size=16 />
+                                                    </button>
+                                                }.into_view(),
+                                                EntryEditor::Create { .. } => ().into_view(),
+                                            })}
+                                            <button
+                                                type="button"
+                                                class="btn-icon btn-icon-sm"
+                                                title="Remove attachment"
+                                                aria-label="Remove attachment"
+                                                on:click=move |_| form.attachments.update(|rows| rows.retain(|other| other.id != id))
+                                            >
+                                                <UiIcon icon=Icon::X size=16 />
+                                            </button>
+                                        </div>
+                                    }
+                                }
+                            />
+                            <button
+                                type="button"
+                                class="btn btn-secondary btn-sm"
+                                on:click=move |_| {
+                                    if let Some(input) = attachment_input.get_untracked() {
+                                        input.click();
+                                    }
+                                }
+                            >
+                                <UiIcon icon=Icon::Plus size=16 />
+                                "Add files"
+                            </button>
+                            <input
+                                type="file"
+                                multiple=true
+                                class="visually-hidden"
+                                node_ref=attachment_input
+                                on:change=on_add_files
+                            />
+                        </section>
 
-                <section class="editor-section">
-                    <h3 class="section-header">"Auto-Type"</h3>
-                    <label class="checkbox-label">
-                        <input
-                            type="checkbox"
-                            prop:checked=move || form.auto_type_enabled.get()
-                            on:change=move |event| form.auto_type_enabled.set(event_target_checked(&event))
-                        />
-                        "Enabled"
-                    </label>
-                    <label class="checkbox-label">
-                        <input
-                            type="checkbox"
-                            prop:checked=move || form.auto_type_obfuscation.get()
-                            on:change=move |event| form.auto_type_obfuscation.set(event_target_checked(&event))
-                        />
-                        "Two-channel obfuscation"
-                    </label>
-                    <TextField
-                        label="Default sequence"
-                        value=form.default_sequence
-                        placeholder="{USERNAME}{TAB}{PASSWORD}{ENTER}"
-                    />
-                    <span class="field-label">"Window associations"</span>
-                    <For
-                        each=move || form.associations.get()
-                        key=|row| row.id
-                        children=move |row| view! {
-                            <div class="editor-row">
+                        <section class="editor-section">
+                            <h3 class="section-header">"Appearance"</h3>
+                            <ColorField label="Text color" value=form.foreground />
+                            <ColorField label="Background color" value=form.background />
+                            <TextField label="Override URL" value=form.override_url placeholder="e.g. cmd://…" />
+                        </section>
+
+                        <section class="editor-section">
+                            <h3 class="section-header">"Auto-Type"</h3>
+                            <label class="checkbox-label">
                                 <input
-                                    type="text"
-                                    class="field-input"
-                                    placeholder="Window title"
-                                    aria-label="Window title"
-                                    prop:value=move || row.window.get()
-                                    on:input=move |event| row.window.set(event_target_value(&event))
+                                    type="checkbox"
+                                    prop:checked=move || form.auto_type_enabled.get()
+                                    on:change=move |event| form.auto_type_enabled.set(event_target_checked(&event))
                                 />
+                                "Enabled"
+                            </label>
+                            <label class="checkbox-label">
                                 <input
-                                    type="text"
-                                    class="field-input"
-                                    placeholder="Sequence (optional)"
-                                    aria-label="Sequence"
-                                    prop:value=move || row.sequence.get()
-                                    on:input=move |event| row.sequence.set(event_target_value(&event))
+                                    type="checkbox"
+                                    prop:checked=move || form.auto_type_obfuscation.get()
+                                    on:change=move |event| form.auto_type_obfuscation.set(event_target_checked(&event))
                                 />
-                                <button
-                                    type="button"
-                                    class="btn-icon btn-icon-sm"
-                                    title="Remove association"
-                                    aria-label="Remove association"
-                                    on:click=move |_| form.associations.update(|rows| rows.retain(|other| other.id != row.id))
-                                >
-                                    <UiIcon icon=Icon::X size=16 />
-                                </button>
-                            </div>
-                        }
-                    />
-                    <button
-                        type="button"
-                        class="btn btn-secondary btn-sm"
-                        on:click=move |_| form.add_association(String::new(), String::new())
-                    >
-                        <UiIcon icon=Icon::Plus size=16 />
-                        "Add window"
-                    </button>
-                </section>
+                                "Two-channel obfuscation"
+                            </label>
+                            <TextField
+                                label="Default sequence"
+                                value=form.default_sequence
+                                placeholder="{USERNAME}{TAB}{PASSWORD}{ENTER}"
+                            />
+                            <span class="field-label">"Window associations"</span>
+                            <For
+                                each=move || form.associations.get()
+                                key=|row| row.id
+                                children=move |row| view! {
+                                    <div class="editor-row">
+                                        <input
+                                            type="text"
+                                            class="field-input"
+                                            placeholder="Window title"
+                                            aria-label="Window title"
+                                            prop:value=move || row.window.get()
+                                            on:input=move |event| row.window.set(event_target_value(&event))
+                                        />
+                                        <input
+                                            type="text"
+                                            class="field-input"
+                                            placeholder="Sequence (optional)"
+                                            aria-label="Sequence"
+                                            prop:value=move || row.sequence.get()
+                                            on:input=move |event| row.sequence.set(event_target_value(&event))
+                                        />
+                                        <button
+                                            type="button"
+                                            class="btn-icon btn-icon-sm"
+                                            title="Remove association"
+                                            aria-label="Remove association"
+                                            on:click=move |_| form.associations.update(|rows| rows.retain(|other| other.id != row.id))
+                                        >
+                                            <UiIcon icon=Icon::X size=16 />
+                                        </button>
+                                    </div>
+                                }
+                            />
+                            <button
+                                type="button"
+                                class="btn btn-secondary btn-sm"
+                                on:click=move |_| form.add_association(String::new(), String::new())
+                            >
+                                <UiIcon icon=Icon::Plus size=16 />
+                                "Add window"
+                            </button>
+                        </section>
+                    </div>
+                </div>
 
                 <Show when=move || error.get().is_some()>
                     <div class="error-message" role="alert">{move || error.get().unwrap_or_default()}</div>

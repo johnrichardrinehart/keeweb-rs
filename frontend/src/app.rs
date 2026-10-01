@@ -13,13 +13,14 @@ use crate::components::{
         ChangesDialog, LockGuard, MergeConflicts, install_save_shortcut, install_unload_guard,
     },
     icons::{Icon, UiIcon},
+    panes::{Pane, Splitter, fit, viewport_width},
     sidebar::Sidebar,
     theme_toggle::ThemeToggle,
     unlock_dialog::UnlockDialog,
 };
 use crate::helper_client;
 use crate::kdf::init_argon2;
-use crate::state::{AppState, AppView, HelperStatus, init_theme};
+use crate::state::{AppState, AppView, HelperStatus, init_theme, load_pane_widths};
 
 /// Root application component
 #[component]
@@ -305,16 +306,38 @@ fn DatabaseView() -> impl IntoView {
     });
     let has_panel = move || state.selected_entry.get().is_some() || state.editor.get().is_some();
 
+    // A new view per vault, so this loads the widths of the vault becoming active.
+    state.pane_widths.set(
+        state
+            .active_vault_key()
+            .map(|vault| load_pane_widths(&vault))
+            .unwrap_or_default(),
+    );
+    let viewport = create_rw_signal(viewport_width());
+    let resize_listener =
+        window_event_listener(ev::resize, move |_| viewport.set(viewport_width()));
+    on_cleanup(move || resize_listener.remove());
+    let resizing = create_rw_signal(false);
+    let column_widths = move || {
+        let (sidebar, list) = fit(state.pane_widths.get(), viewport.get());
+        format!("--sidebar-width: {sidebar}px; --list-width: {list}px")
+    };
+
     view! {
         <div
             class="database-view"
             class:groups-open=move || groups_open.get()
             class:has-panel=has_panel
+            class:resizing=move || resizing.get()
+            class:two-column=move || state.two_column.get()
+            style=column_widths
         >
             <Sidebar />
+            <Splitter pane=Pane::Sidebar viewport=viewport.read_only() resizing=resizing />
             <div class="groups-backdrop" on:click=move |_| groups_open.set(false)></div>
             <div class="content-area">
                 <EntryList />
+                <Splitter pane=Pane::List viewport=viewport.read_only() resizing=resizing />
                 <Show when=has_panel>
                     <EntryPanel />
                 </Show>

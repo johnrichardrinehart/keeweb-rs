@@ -13,6 +13,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use keeweb_wasm::WasmDocument;
 use keeweb_wasm::document::{Change, ChangeOutcome, EntryView, GroupView, MetaView};
 use leptos::*;
+use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use uuid::Uuid;
 use wasm_bindgen_futures::spawn_local;
@@ -186,6 +187,53 @@ pub fn save_idle_lock(seconds: Option<u32>) {
     if let Some(storage) = local_storage() {
         let value = seconds.map_or_else(|| "never".to_string(), |s| s.to_string());
         let _ = storage.set_item(IDLE_LOCK_KEY, &value);
+    }
+}
+
+const PANE_WIDTHS_PREFIX: &str = "keeweb-rs-layout:";
+
+/// Column widths in CSS pixels chosen on this browser for one vault; `None` is the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneWidths {
+    pub sidebar: Option<i32>,
+    pub list: Option<i32>,
+}
+
+pub fn load_pane_widths(vault: &str) -> PaneWidths {
+    local_storage()
+        .and_then(|s| {
+            s.get_item(&format!("{PANE_WIDTHS_PREFIX}{vault}"))
+                .ok()
+                .flatten()
+        })
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_pane_widths(vault: &str, widths: PaneWidths) {
+    let Some(storage) = local_storage() else {
+        return;
+    };
+    let key = format!("{PANE_WIDTHS_PREFIX}{vault}");
+    if widths == PaneWidths::default() {
+        let _ = storage.remove_item(&key);
+    } else if let Ok(json) = serde_json::to_string(&widths) {
+        let _ = storage.set_item(&key, &json);
+    }
+}
+
+const TWO_COLUMN_KEY: &str = "keeweb-rs-two-column";
+
+/// Whether wide entry panels show their fields in two columns on this browser.
+pub fn load_two_column() -> bool {
+    local_storage()
+        .and_then(|s| s.get_item(TWO_COLUMN_KEY).ok().flatten())
+        .is_none_or(|value| value != "false")
+}
+
+pub fn save_two_column(enabled: bool) {
+    if let Some(storage) = local_storage() {
+        let _ = storage.set_item(TWO_COLUMN_KEY, &enabled.to_string());
     }
 }
 
@@ -368,6 +416,10 @@ pub struct AppState {
     pub theme: RwSignal<Theme>,
     /// Inactivity seconds before auto-lock on this browser; `None` turns it off.
     pub idle_lock: RwSignal<Option<u32>>,
+    /// Column widths of the vault on screen, as stored on this browser
+    pub pane_widths: RwSignal<PaneWidths>,
+    /// Two-column entry panel on wide screens, on this browser
+    pub two_column: RwSignal<bool>,
 }
 
 impl AppState {
@@ -402,6 +454,8 @@ impl AppState {
             backend_url: create_rw_signal(None),
             theme: create_rw_signal(initial_theme),
             idle_lock: create_rw_signal(load_idle_lock()),
+            pane_widths: create_rw_signal(PaneWidths::default()),
+            two_column: create_rw_signal(load_two_column()),
         }
     }
 

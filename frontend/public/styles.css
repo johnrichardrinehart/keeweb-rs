@@ -887,6 +887,116 @@ textarea {
     min-width: 12rem;
 }
 
+.layout-option {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+
+.layout-option .checkbox-label {
+    white-space: normal;
+}
+
+/* Preview of the entry panel layouts beside the two-column setting. Kept in the
+   document while hidden, because the checkbox and the info button reference it. */
+.layout-preview {
+    position: absolute;
+    bottom: calc(100% + var(--space-2));
+    left: 0;
+    z-index: 10;
+    display: grid;
+    gap: var(--space-2);
+    width: max-content;
+    max-width: calc(100vw - 2 * var(--space-5));
+    padding: var(--space-3);
+    color: var(--color-text-secondary);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    font-size: var(--text-xs);
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity var(--transition-fast), visibility var(--transition-fast);
+}
+
+.layout-preview.open {
+    visibility: visible;
+    opacity: 1;
+}
+
+.layout-preview-title {
+    color: var(--color-text);
+    font-weight: 600;
+}
+
+.layout-sketches {
+    display: flex;
+    gap: var(--space-3);
+}
+
+.layout-sketch {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-1);
+}
+
+.layout-sketch-frame {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 6px;
+    width: 120px;
+    height: 76px;
+    padding: 8px;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+}
+
+.layout-sketch-header {
+    width: 55%;
+    height: 8px;
+    background: var(--color-border-strong);
+    border-radius: 2px;
+}
+
+.layout-sketch-columns {
+    display: flex;
+    gap: 8px;
+}
+
+.layout-sketch-column {
+    display: grid;
+    flex: 0 1 62%;
+    align-content: start;
+    gap: 4px;
+}
+
+.layout-sketch-columns > .layout-sketch-column:not(:only-child) {
+    flex-basis: 50%;
+}
+
+.layout-sketch-column > span {
+    height: 6px;
+    background: var(--color-border);
+    border-radius: 2px;
+}
+
+.layout-sketch.active .layout-sketch-frame {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.layout-sketch.active .layout-sketch-column > span {
+    background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+.layout-sketch.active .layout-sketch-label {
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
 /* Unlock dialog */
 .unlock-dialog {
     max-width: 520px;
@@ -997,6 +1107,59 @@ textarea {
     height: 100%;
 }
 
+/* Column widths come from --sidebar-width and --list-width, set from the stored
+   widths and the window width. */
+.database-view.resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
+.database-view.resizing * {
+    cursor: inherit;
+}
+
+/* Zero-width splitter over the right border of the column before it, with a wider
+   invisible hit area. */
+.pane-splitter {
+    position: relative;
+    z-index: 5;
+    flex: 0 0 0;
+    width: 0;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.pane-splitter::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto;
+    left: -4px;
+    width: 8px;
+}
+
+.pane-splitter::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto;
+    left: -2px;
+    width: 3px;
+    background: transparent;
+    transition: background var(--transition-fast);
+}
+
+.pane-splitter:hover::after {
+    background: var(--color-border-strong);
+}
+
+.pane-splitter:focus-visible {
+    outline: none;
+}
+
+.pane-splitter:focus-visible::after,
+.pane-splitter.dragging::after {
+    background: var(--color-primary);
+}
+
 .groups-toggle,
 .groups-backdrop {
     display: none;
@@ -1005,9 +1168,9 @@ textarea {
 /* Sidebar */
 .sidebar {
     display: flex;
-    flex: 0 0 264px;
+    flex: 0 0 var(--sidebar-width, 264px);
     flex-direction: column;
-    width: 264px;
+    width: var(--sidebar-width, 264px);
     background: var(--color-bg-secondary);
     border-right: 1px solid var(--color-border);
 }
@@ -1254,9 +1417,9 @@ textarea {
 /* Entry list */
 .entry-list {
     display: flex;
-    flex: 0 0 340px;
+    flex: 0 0 var(--list-width, clamp(340px, 22vw, 520px));
     flex-direction: column;
-    width: 340px;
+    width: var(--list-width, clamp(340px, 22vw, 520px));
     min-width: 0;
     background: var(--color-surface);
     border-right: 1px solid var(--color-border);
@@ -1654,6 +1817,17 @@ textarea {
 
 .entry-detail-body > * {
     max-width: 760px;
+}
+
+/* Wide panels split the fields in two: credentials on the left, the rest on the right. */
+@container (min-width: 1100px) {
+    .two-column .entry-detail-body > .detail-columns {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 720px));
+        align-items: start;
+        gap: 0 var(--space-6);
+        max-width: none;
+    }
 }
 
 .entry-detail-footer {
@@ -2543,30 +2717,6 @@ textarea {
     background: var(--color-secondary);
 }
 
-@media (max-width: 1100px) {
-    .sidebar {
-        flex-basis: 232px;
-        width: 232px;
-    }
-
-    .entry-list {
-        flex-basis: 300px;
-        width: 300px;
-    }
-}
-
-@media (max-width: 900px) {
-    .sidebar {
-        flex-basis: 210px;
-        width: 210px;
-    }
-
-    .entry-list {
-        flex-basis: 270px;
-        width: 270px;
-    }
-}
-
 /* Touch screens: row actions always shown, no drag-and-drop, no localhost helper.
    Controls stay at least 36 px tall. Comes before the width queries so their
    compact sizes win. */
@@ -2747,6 +2897,10 @@ textarea {
     .groups-open .sidebar {
         transform: none;
         box-shadow: var(--shadow-lg);
+    }
+
+    .pane-splitter {
+        display: none;
     }
 
     .groups-open .groups-backdrop {

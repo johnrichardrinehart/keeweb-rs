@@ -1,5 +1,5 @@
 //! Database name, description, recycle bin, history limits, fingerprint unlock, and the
-//! inactivity lock of this browser.
+//! inactivity lock and layout of this browser.
 
 use keeweb_wasm::document::{Change, MetaEdit};
 use leptos::*;
@@ -7,7 +7,7 @@ use leptos::*;
 use crate::components::dialog::Dialog;
 use crate::components::icons::{Icon, UiIcon};
 use crate::quick_unlock::{self, Support};
-use crate::state::{AppState, save_idle_lock};
+use crate::state::{AppState, PaneWidths, save_idle_lock, save_pane_widths, save_two_column};
 
 const MIB: i64 = 1024 * 1024;
 
@@ -166,6 +166,7 @@ fn SettingsForm(initial: MetaEdit) -> impl IntoView {
                     </Show>
                     <FingerprintSettings />
                     <IdleLockSettings />
+                    <LayoutSettings />
                 </div>
                 <div class="dialog-footer">
                     <button type="button" class="btn btn-secondary" on:click=move |_| close()>"Cancel"</button>
@@ -324,5 +325,156 @@ fn IdleLockSettings() -> impl IntoView {
                     .collect_view()}
             </select>
         </section>
+    }
+}
+
+/// Entry panel layout, stored per browser, and the column widths of the vault on screen.
+#[component]
+fn LayoutSettings() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let hovered = create_rw_signal(false);
+    let focused = create_rw_signal(false);
+    let pinned = create_rw_signal(false);
+    // Escape or a second click hides the preview until the pointer or focus comes back.
+    let dismissed = create_rw_signal(false);
+    let open = move || !dismissed.get() && (hovered.get() || focused.get() || pinned.get());
+    let info = create_node_ref::<html::Button>();
+    let reset_done = create_rw_signal(false);
+
+    let reset = move |_| {
+        state.pane_widths.set(PaneWidths::default());
+        if let Some(vault) = state.active_vault_key() {
+            save_pane_widths(&vault, PaneWidths::default());
+        }
+        reset_done.set(true);
+    };
+
+    view! {
+        <section
+            class="settings-section"
+            aria-labelledby="layout-settings-title"
+            on:keydown=move |event| {
+                if event.key() == "Escape" && open() {
+                    // Closes the preview only, not the dialog.
+                    event.stop_propagation();
+                    dismissed.set(true);
+                    pinned.set(false);
+                }
+            }
+        >
+            <h3 id="layout-settings-title" class="settings-section-title">"Layout"</h3>
+            <div class="layout-option">
+                <label class="checkbox-label">
+                    <input
+                        type="checkbox"
+                        aria-describedby="layout-preview"
+                        prop:checked=move || state.two_column.get()
+                        on:change=move |event| {
+                            let enabled = event_target_checked(&event);
+                            state.two_column.set(enabled);
+                            save_two_column(enabled);
+                        }
+                    />
+                    "Two-column entry details on wide screens"
+                </label>
+                <span
+                    class="layout-preview-anchor"
+                    on:pointerenter=move |event| {
+                        if event.pointer_type() == "mouse" {
+                            dismissed.set(false);
+                            hovered.set(true);
+                        }
+                    }
+                    on:pointerleave=move |_| hovered.set(false)
+                >
+                    <button
+                        type="button"
+                        class="btn-icon btn-icon-sm"
+                        node_ref=info
+                        aria-label="Layout preview"
+                        aria-describedby="layout-preview"
+                        on:focus=move |_| {
+                            // Focus from a tap or click is handled by the click toggle;
+                            // only keyboard focus opens the preview by itself.
+                            let keyboard = info
+                                .get_untracked()
+                                .is_some_and(|button| button.matches(":focus-visible").unwrap_or(false));
+                            if keyboard {
+                                dismissed.set(false);
+                                focused.set(true);
+                            }
+                        }
+                        on:blur=move |_| {
+                            focused.set(false);
+                            pinned.set(false);
+                        }
+                        on:click=move |_| {
+                            if open() {
+                                dismissed.set(true);
+                                pinned.set(false);
+                            } else {
+                                dismissed.set(false);
+                                pinned.set(true);
+                            }
+                        }
+                    >
+                        <UiIcon icon=Icon::Info size=16 />
+                    </button>
+                    <div id="layout-preview" role="tooltip" class="layout-preview" class:open=open>
+                        <span class="layout-preview-title">"Entry details on wide screens"</span>
+                        <div class="layout-sketches">
+                            <LayoutSketch two_columns=false label="Single column" />
+                            <LayoutSketch two_columns=true label="Two columns" />
+                        </div>
+                    </div>
+                </span>
+            </div>
+            <p class="section-hint">
+                "Applies to this browser. Two columns appear once the detail panel is about 1100 pixels wide."
+            </p>
+            <button
+                type="button"
+                class="btn btn-secondary"
+                disabled=move || state.pane_widths.get() == PaneWidths::default()
+                on:click=reset
+            >
+                "Reset column widths for this vault"
+            </button>
+            <Show when=move || reset_done.get() && state.pane_widths.get() == PaneWidths::default()>
+                <p class="section-hint" role="status">"Column widths are back to the defaults."</p>
+            </Show>
+        </section>
+    }
+}
+
+/// Wireframe of the entry panel in the layout preview.
+#[component]
+fn LayoutSketch(two_columns: bool, label: &'static str) -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let active = move || state.two_column.get() == two_columns;
+    let columns = if two_columns { 2 } else { 1 };
+
+    view! {
+        <div class="layout-sketch" class:active=active>
+            <div class="layout-sketch-frame" aria-hidden="true">
+                <span class="layout-sketch-header"></span>
+                <div class="layout-sketch-columns">
+                    {(0..columns)
+                        .map(|_| view! {
+                            <div class="layout-sketch-column">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                        })
+                        .collect_view()}
+                </div>
+            </div>
+            <span class="layout-sketch-label">
+                {label}
+                <span class="visually-hidden">{move || if active() { " (current)" } else { "" }}</span>
+            </span>
+        </div>
     }
 }

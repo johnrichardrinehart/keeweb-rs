@@ -8,6 +8,7 @@ pub mod entry_list;
 pub mod file_picker;
 pub mod guard;
 pub mod icons;
+pub mod panes;
 pub mod password_generator;
 pub mod sidebar;
 pub mod theme_toggle;

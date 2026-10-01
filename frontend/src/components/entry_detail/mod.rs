@@ -282,135 +282,141 @@ fn EntryDetailContent(
         </div>
 
         <div class="entry-detail-body">
-            <div class="field-group">
-                <label>"Username"</label>
-                <div class="field-value-row">
-                    <input type="text" class="field-input" value=username readonly=true aria-label="Username" />
-                    <button
-                        type="button"
-                        class="btn-icon btn-icon-sm"
-                        class:copied=is_copied("username")
-                        on:click=move |_| copy(username_for_copy.clone(), "username")
-                        title="Copy username"
-                        aria-label="Copy username"
-                    >
-                        {copy_glyph(is_copied("username"))}
-                    </button>
-                </div>
-            </div>
-
-            <div class="field-group">
-                <label>"Password"</label>
-                <div class="field-value-row">
-                    <input
-                        type=move || if show_password.get() { "text" } else { "password" }
-                        class="field-input field-input-secret"
-                        value=password
-                        readonly=true
-                        autocomplete="off"
-                        aria-label="Password"
-                    />
-                    <button
-                        type="button"
-                        class="btn-icon btn-icon-sm"
-                        on:click=move |_| show_password.update(|v| *v = !*v)
-                        title=move || if show_password.get() { "Hide password" } else { "Show password" }
-                        aria-label=move || if show_password.get() { "Hide password" } else { "Show password" }
-                    >
-                        {reveal_glyph(move || show_password.get())}
-                    </button>
-                    <button
-                        type="button"
-                        class="btn-icon btn-icon-sm"
-                        class:copied=is_copied("password")
-                        on:click=move |_| copy(password_for_copy.clone(), "password")
-                        title="Copy password"
-                        aria-label="Copy password"
-                    >
-                        {copy_glyph(is_copied("password"))}
-                    </button>
-                </div>
-            </div>
-
-            {otp.map(|otp_value| view! { <TotpField otp_value=otp_value copied_field=copied_field /> })}
-
-            <div class="field-group">
-                <label>"URL"</label>
-                <div class="field-value-row">
-                    <input type="text" class="field-input" value=url.clone() readonly=true aria-label="URL" />
-                    {(!url.is_empty()).then(|| view! {
-                        <a
-                            href=url_for_link
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="btn-icon btn-icon-sm"
-                            title="Open URL"
-                            aria-label="Open URL"
-                        >
-                            <UiIcon icon=Icon::ExternalLink size=16 />
-                        </a>
-                    })}
-                    <button
-                        type="button"
-                        class="btn-icon btn-icon-sm"
-                        class:copied=is_copied("url")
-                        on:click=move |_| copy(url_for_copy.clone(), "url")
-                        title="Copy URL"
-                        aria-label="Copy URL"
-                    >
-                        {copy_glyph(is_copied("url"))}
-                    </button>
-                </div>
-            </div>
-
-            <div class="field-group">
-                <label>"Notes"</label>
-                <textarea class="field-textarea" readonly=true aria-label="Notes">{notes}</textarea>
-            </div>
-
-            {(!custom_fields.is_empty()).then(|| view! {
-                <section class="detail-section">
-                    <h3 class="section-header">"Custom fields"</h3>
-                    {custom_fields.into_iter().map(|field| view! {
-                        <CustomFieldView
-                            key=field.key
-                            value=field.value
-                            protected=field.protected
-                            copied_field=copied_field
-                        />
-                    }).collect_view()}
-                </section>
-            })}
-
-            {(!entry.attachments.is_empty()).then(|| view! {
-                <section class="detail-section">
-                    <h3 class="section-header">"Attachments"</h3>
-                    <div class="attachments-list">
-                        {entry.attachments.iter().map(|attachment| {
-                            let name = attachment.name.clone();
-                            let name_for_download = attachment.name.clone();
-                            view! {
-                                <div class="attachment-item">
-                                    <UiIcon icon=Icon::Paperclip size=16 />
-                                    <span class="attachment-name">{name.clone()}</span>
-                                    <span class="attachment-size">{model::format_size(attachment.size)}</span>
-                                    <button
-                                        type="button"
-                                        class="btn-icon btn-icon-sm"
-                                        title="Download"
-                                        aria-label=format!("Download {name}")
-                                        on:click=move |_| download_attachment(state, uuid, &name_for_download)
-                                    >
-                                        <UiIcon icon=Icon::Download size=16 />
-                                    </button>
-                                </div>
-                            }
-                        }).collect_view()}
+            <div class="detail-columns">
+                <div class="detail-column">
+                    <div class="field-group">
+                        <label>"Username"</label>
+                        <div class="field-value-row">
+                            <input type="text" class="field-input" value=username readonly=true aria-label="Username" />
+                            <button
+                                type="button"
+                                class="btn-icon btn-icon-sm"
+                                class:copied=is_copied("username")
+                                on:click=move |_| copy(username_for_copy.clone(), "username")
+                                title="Copy username"
+                                aria-label="Copy username"
+                            >
+                                {copy_glyph(is_copied("username"))}
+                            </button>
+                        </div>
                     </div>
-                </section>
-            })}
 
-            <EntryProperties entry=entry.clone() />
+                    <div class="field-group">
+                        <label>"Password"</label>
+                        <div class="field-value-row">
+                            <input
+                                type=move || if show_password.get() { "text" } else { "password" }
+                                class="field-input field-input-secret"
+                                value=password
+                                readonly=true
+                                autocomplete="off"
+                                aria-label="Password"
+                            />
+                            <button
+                                type="button"
+                                class="btn-icon btn-icon-sm"
+                                on:click=move |_| show_password.update(|v| *v = !*v)
+                                title=move || if show_password.get() { "Hide password" } else { "Show password" }
+                                aria-label=move || if show_password.get() { "Hide password" } else { "Show password" }
+                            >
+                                {reveal_glyph(move || show_password.get())}
+                            </button>
+                            <button
+                                type="button"
+                                class="btn-icon btn-icon-sm"
+                                class:copied=is_copied("password")
+                                on:click=move |_| copy(password_for_copy.clone(), "password")
+                                title="Copy password"
+                                aria-label="Copy password"
+                            >
+                                {copy_glyph(is_copied("password"))}
+                            </button>
+                        </div>
+                    </div>
+
+                    {otp.map(|otp_value| view! { <TotpField otp_value=otp_value copied_field=copied_field /> })}
+
+                    <div class="field-group">
+                        <label>"URL"</label>
+                        <div class="field-value-row">
+                            <input type="text" class="field-input" value=url.clone() readonly=true aria-label="URL" />
+                            {(!url.is_empty()).then(|| view! {
+                                <a
+                                    href=url_for_link
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="btn-icon btn-icon-sm"
+                                    title="Open URL"
+                                    aria-label="Open URL"
+                                >
+                                    <UiIcon icon=Icon::ExternalLink size=16 />
+                                </a>
+                            })}
+                            <button
+                                type="button"
+                                class="btn-icon btn-icon-sm"
+                                class:copied=is_copied("url")
+                                on:click=move |_| copy(url_for_copy.clone(), "url")
+                                title="Copy URL"
+                                aria-label="Copy URL"
+                            >
+                                {copy_glyph(is_copied("url"))}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="detail-column">
+                    <div class="field-group">
+                        <label>"Notes"</label>
+                        <textarea class="field-textarea" readonly=true aria-label="Notes">{notes}</textarea>
+                    </div>
+
+                    {(!custom_fields.is_empty()).then(|| view! {
+                        <section class="detail-section">
+                            <h3 class="section-header">"Custom fields"</h3>
+                            {custom_fields.into_iter().map(|field| view! {
+                                <CustomFieldView
+                                    key=field.key
+                                    value=field.value
+                                    protected=field.protected
+                                    copied_field=copied_field
+                                />
+                            }).collect_view()}
+                        </section>
+                    })}
+
+                    {(!entry.attachments.is_empty()).then(|| view! {
+                        <section class="detail-section">
+                            <h3 class="section-header">"Attachments"</h3>
+                            <div class="attachments-list">
+                                {entry.attachments.iter().map(|attachment| {
+                                    let name = attachment.name.clone();
+                                    let name_for_download = attachment.name.clone();
+                                    view! {
+                                        <div class="attachment-item">
+                                            <UiIcon icon=Icon::Paperclip size=16 />
+                                            <span class="attachment-name">{name.clone()}</span>
+                                            <span class="attachment-size">{model::format_size(attachment.size)}</span>
+                                            <button
+                                                type="button"
+                                                class="btn-icon btn-icon-sm"
+                                                title="Download"
+                                                aria-label=format!("Download {name}")
+                                                on:click=move |_| download_attachment(state, uuid, &name_for_download)
+                                            >
+                                                <UiIcon icon=Icon::Download size=16 />
+                                            </button>
+                                        </div>
+                                    }
+                                }).collect_view()}
+                            </div>
+                        </section>
+                    })}
+
+                    <EntryProperties entry=entry.clone() />
+                </div>
+            </div>
         </div>
 
         {move || match modal.get() {
