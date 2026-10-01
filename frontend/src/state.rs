@@ -611,12 +611,11 @@ impl AppState {
             parallelism
         );
 
-        // For high memory (>=256MB), try the helper server first for native speed.
-        // The helper doesn't require pthread/SharedArrayBuffer - it runs natively on the server.
-        // This check happens BEFORE checking is_argon2_ready() because the helper is preferred
-        // for high-memory databases regardless of browser capabilities.
-        // Default KeePassXC memory is 64MB, so this catches users with elevated security settings.
-        if memory_mb >= 256 {
+        // Use the native helper whenever it is configured. Native Argon2 is several
+        // times faster than WebAssembly at every memory size. Without the helper,
+        // databases with 256 MB or more use the slow fallback because the parallel
+        // WebAssembly path cannot allocate that much memory.
+        if memory_mb >= 256 || helper_client::is_helper_configured() {
             let argon2_type = kdf_params.kdf_type();
             let composite_key = kdf_params.composite_key();
             let salt = kdf_params.salt();
@@ -624,10 +623,9 @@ impl AppState {
             let memory_kb = kdf_params.memory_kb() as u32;
             let version = kdf_params.version();
 
-            // Try helper server first if configured
             let helper_configured = helper_client::is_helper_configured();
             log::info!(
-                "High memory ({}MB) database - helper configured: {}",
+                "KDF memory {}MB - helper configured: {}",
                 memory_mb,
                 helper_configured
             );
