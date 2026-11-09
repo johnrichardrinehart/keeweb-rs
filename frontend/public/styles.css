@@ -1560,6 +1560,12 @@ textarea {
     background: var(--color-primary-soft);
 }
 
+/* Search cursor: the row that Enter opens while the search box has focus. */
+.entry-item.cursor {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+}
+
 .entry-icon {
     display: grid;
     place-items: center;

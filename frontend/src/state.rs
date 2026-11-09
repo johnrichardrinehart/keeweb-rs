@@ -407,6 +407,9 @@ pub struct AppState {
     pub selected_entry: RwSignal<Option<Uuid>>,
     /// Search query
     pub search_query: RwSignal<String>,
+    /// Search result that Enter opens and the copy shortcuts use while the search box
+    /// has focus; the best match until the arrow keys move it
+    pub search_cursor: RwSignal<Option<Uuid>>,
     /// Error of the active vault, or of the picker
     pub error_message: RwSignal<Option<String>>,
     /// Copy button of the open entry whose value was just copied, by field key
@@ -455,6 +458,7 @@ impl AppState {
             selected_tag: create_rw_signal(None),
             selected_entry: create_rw_signal(None),
             search_query: create_rw_signal(String::new()),
+            search_cursor: create_rw_signal(None),
             error_message: create_rw_signal(None),
             copied_field: create_rw_signal(None),
             notice: create_rw_signal(None),
@@ -1020,9 +1024,10 @@ impl AppState {
 
     /// Get filtered entries based on search query, selected group, or selected tag.
     /// Entries in the recycle bin only show while a recycle bin group is selected. A search
-    /// covers the selected group and every group below it.
+    /// covers the selected group and every group below it, and lists the best matches
+    /// first; see [`crate::search`].
     pub fn filtered_entries(&self) -> Vec<EntryView> {
-        let query = self.search_query.get().to_lowercase();
+        let query = crate::search::Query::parse(&self.search_query.get());
         let selected_group = self.selected_group.get();
         let selected_tag = self.selected_tag.get();
         let bin_selected = selected_group
@@ -1030,46 +1035,80 @@ impl AppState {
             .is_some_and(|group| group.is_recycle_bin || group.in_recycle_bin);
         // Browsing lists a folder's own entries; a search also covers its subfolders.
         let scope: Option<Vec<Uuid>> = selected_group.map(|group| {
-            if query.is_empty() {
+            if query.is_none() {
                 vec![group]
             } else {
                 self.groups
                     .with(|groups| crate::model::subtree(groups, group))
             }
         });
+        let in_scope = |entry: &EntryView| {
+            if let Some(tag) = &selected_tag {
+                if !entry.tags.contains(tag) {
+                    return false;
+                }
+            } else if let Some(groups) = &scope {
+                if !groups.contains(&entry.group) {
+                    return false;
+                }
+            }
+            !entry.in_recycle_bin || bin_selected
+        };
 
-        let mut filtered: Vec<EntryView> = self.entries.with(|entries| {
-            entries
+        let Some(query) = query else {
+            let mut filtered: Vec<EntryView> = self.entries.with(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| in_scope(entry))
+                    .cloned()
+                    .collect()
+            });
+            filtered.sort_by_cached_key(|entry| entry.title().to_lowercase());
+            return filtered;
+        };
+
+        // Group names below the root, which every entry shares.
+        let group_names: std::collections::HashMap<Uuid, String> = self.groups.with(|groups| {
+            groups
                 .iter()
-                .filter(|entry| {
-                    if let Some(tag) = &selected_tag {
-                        if !entry.tags.contains(tag) {
-                            return false;
-                        }
-                    } else if let Some(groups) = &scope {
-                        if !groups.contains(&entry.group) {
-                            return false;
-                        }
-                    }
-                    if entry.in_recycle_bin && !bin_selected {
-                        return false;
-                    }
-                    if !query.is_empty() {
-                        let matches = |key: &str| {
-                            entry
-                                .field(key)
-                                .is_some_and(|value| value.to_lowercase().contains(&query))
-                        };
-                        return matches("Title") || matches("UserName") || matches("URL");
-                    }
-                    true
+                .map(|group| {
+                    let path = crate::model::group_path(groups, group.uuid);
+                    let below_root = path.split_once(" / ").map_or("", |(_, rest)| rest);
+                    (group.uuid, below_root.to_string())
                 })
-                .cloned()
                 .collect()
         });
-
-        filtered.sort_by_cached_key(|entry| entry.title().to_lowercase());
-        filtered
+        let mut ranked: Vec<(f32, String, EntryView)> = self.entries.with(|entries| {
+            entries
+                .iter()
+                .filter(|entry| in_scope(entry))
+                .filter_map(|entry| {
+                    let mut fields = vec![
+                        (crate::search::TITLE, entry.title()),
+                        (
+                            crate::search::USER_NAME,
+                            entry.field("UserName").unwrap_or_default(),
+                        ),
+                        (crate::search::URL, entry.field("URL").unwrap_or_default()),
+                    ];
+                    fields.extend(
+                        entry
+                            .tags
+                            .iter()
+                            .map(|tag| (crate::search::TAG, tag.as_str())),
+                    );
+                    if let Some(name) = group_names.get(&entry.group) {
+                        fields.push((crate::search::GROUP, name.as_str()));
+                    }
+                    let score = query.score(&fields)?;
+                    Some((score, entry.title().to_lowercase(), entry.clone()))
+                })
+                .collect()
+        });
+        ranked.sort_by(|(a, a_title, _), (b, b_title, _)| {
+            b.total_cmp(a).then_with(|| a_title.cmp(b_title))
+        });
+        ranked.into_iter().map(|(_, _, entry)| entry).collect()
     }
 
     /// Get the currently selected entry

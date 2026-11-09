@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::app::GroupsDrawer;
 use crate::components::icons::{Icon, KeepassIcon, UiIcon};
+use crate::components::shortcuts::SEARCH_SHORTCUT;
 use crate::model::{self, USER_NAME};
 use crate::state::{AppState, EntryEditor};
 use keeweb_wasm::document::GroupView;
@@ -51,6 +52,66 @@ pub fn EntryList() -> impl IntoView {
     let on_search = move |ev| {
         state.search_query.set(event_target_value(&ev));
     };
+
+    // The cursor starts on the best match whenever the query changes, and stays put
+    // while only the rows change, e.g. after an edit, as long as its row remains.
+    let cursor = state.search_cursor;
+    create_effect(move |previous: Option<String>| {
+        let query = state.search_query.get();
+        rows.with(|rows| {
+            let kept = previous.as_deref() == Some(query.as_str())
+                && cursor
+                    .get_untracked()
+                    .is_some_and(|uuid| rows.iter().any(|row| row.uuid == uuid));
+            if crate::search::Query::parse(&query).is_none() {
+                if !kept {
+                    cursor.set(None);
+                }
+            } else if !kept {
+                cursor.set(rows.first().map(|row| row.uuid));
+            }
+        });
+        query
+    });
+    let searching = create_rw_signal(false);
+    let move_cursor = move |step: isize| {
+        rows.with_untracked(|rows| {
+            let Some(last) = rows.len().checked_sub(1) else {
+                return;
+            };
+            let current = cursor
+                .get_untracked()
+                .and_then(|uuid| rows.iter().position(|row| row.uuid == uuid));
+            let next = match current {
+                Some(index) => index.saturating_add_signed(step).min(last),
+                None if step < 0 => last,
+                None => 0,
+            };
+            cursor.set(Some(rows[next].uuid));
+        });
+    };
+    let on_search_key = move |event: web_sys::KeyboardEvent| {
+        if event.is_composing() || event.ctrl_key() || event.meta_key() || event.alt_key() {
+            return;
+        }
+        match event.key().as_str() {
+            "ArrowDown" => move_cursor(1),
+            "ArrowUp" => move_cursor(-1),
+            "Enter" => {
+                let Some(uuid) = cursor.get_untracked() else {
+                    return;
+                };
+                state.editor.set(None);
+                state.selected_entry.set(Some(uuid));
+            }
+            "Escape" if state.search_query.with_untracked(|query| !query.is_empty()) => {
+                state.search_query.set(String::new());
+            }
+            _ => return,
+        }
+        event.prevent_default();
+    };
+    let active_row = move || searching.get().then(|| cursor.get()).flatten().map(row_id);
 
     let new_entry = move |_| {
         if let Some(group) = state.target_group() {
@@ -113,8 +174,18 @@ pub fn EntryList() -> impl IntoView {
                             class="search-input"
                             placeholder=placeholder
                             aria-label="Search entries"
+                            title=format!("Search entries ({})", SEARCH_SHORTCUT.label())
+                            aria-keyshortcuts=SEARCH_SHORTCUT.aria()
+                            role="combobox"
+                            aria-autocomplete="list"
+                            aria-expanded="true"
+                            aria-controls="entry-results"
+                            aria-activedescendant=active_row
                             prop:value=move || state.search_query.get()
                             on:input=on_search
+                            on:keydown=on_search_key
+                            on:focus=move |_| searching.set(true)
+                            on:blur=move |_| searching.set(false)
                         />
                         <Show when=move || state.search_query.with(|query| !query.is_empty())>
                             <span class="search-count" aria-hidden="true">
@@ -140,7 +211,7 @@ pub fn EntryList() -> impl IntoView {
                 </div>
             </div>
 
-            <div class="entry-list-items">
+            <div class="entry-list-items" id="entry-results">
                 <Show
                     when=move || rows.with(|rows| !rows.is_empty())
                     fallback=|| view! {
@@ -152,7 +223,7 @@ pub fn EntryList() -> impl IntoView {
                     <For
                         each=move || rows.get()
                         key=|row| row.clone()
-                        children=move |row| view! { <EntryListItem row=row /> }
+                        children=move |row| view! { <EntryListItem row=row searching=searching /> }
                     />
                 </Show>
             </div>
@@ -160,12 +231,31 @@ pub fn EntryList() -> impl IntoView {
     }
 }
 
+/// Element ID of the list row of entry `uuid`.
+fn row_id(uuid: Uuid) -> String {
+    format!("entry-{uuid}")
+}
+
 /// A single entry in the list: title, then username and group path on one line.
+/// `searching` is whether the search box has focus, which shows the search cursor.
 #[component]
-fn EntryListItem(row: EntryRow) -> impl IntoView {
+fn EntryListItem(row: EntryRow, searching: RwSignal<bool>) -> impl IntoView {
     let state = expect_context::<AppState>();
     let uuid = row.uuid;
     let selected = move || state.selected_entry.get() == Some(uuid);
+    let at_cursor = create_memo(move |_| state.search_cursor.get() == Some(uuid));
+    let shows_cursor = move || searching.get() && at_cursor.get();
+    let node = create_node_ref::<html::Button>();
+    // Keeps the cursor row on screen as the arrow keys move it. Tracks the node too,
+    // since the row mounts after this first runs.
+    create_effect(move |_| {
+        let element = node.get();
+        if let (true, Some(element)) = (at_cursor.get(), element) {
+            let options = web_sys::ScrollIntoViewOptions::new();
+            options.set_block(web_sys::ScrollLogicalPosition::Nearest);
+            element.scroll_into_view_with_scroll_into_view_options(&options);
+        }
+    });
     let letter = row
         .title
         .chars()
@@ -190,6 +280,9 @@ fn EntryListItem(row: EntryRow) -> impl IntoView {
             type="button"
             class="entry-item"
             class:selected=selected
+            class:cursor=shows_cursor
+            id=row_id(uuid)
+            node_ref=node
             aria-current=move || selected().then_some("true")
             title=row.title.clone()
             // Copy shortcuts act on the row with focus, see `shortcuts::ENTRY_ATTRIBUTE`.

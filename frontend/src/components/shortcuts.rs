@@ -1,12 +1,14 @@
-//! Keyboard shortcuts that copy values of the focused entry.
+//! Keyboard shortcuts of an open vault.
 //!
-//! The target is the entry row that has keyboard focus in the list, otherwise the
-//! entry open in the detail panel. The bindings follow KeeWeb: Ctrl/⌘+C copies the
-//! password unless text is selected, Ctrl/⌘+B the username, Ctrl/⌘+U the URL and
-//! Alt/⌥+2 the one-time code.
+//! Ctrl/⌘+F moves focus to the entry search; pressed again there, it opens the
+//! browser's own find bar.
 //!
-//! They stay off while an entry is being edited, a dialog is open, or focus is in a
-//! writable text field other than the entry search.
+//! The copy shortcuts act on the entry row that has keyboard focus in the list, the
+//! search cursor while the search box has focus, otherwise the entry open in the
+//! detail panel. The bindings follow KeeWeb: Ctrl/⌘+C copies the password unless
+//! text is selected, Ctrl/⌘+B the username, Ctrl/⌘+U the URL and Alt/⌥+2 the
+//! one-time code. They stay off while an entry is being edited, a dialog is open, or
+//! focus is in a writable text field other than the entry search.
 
 use keeweb_wasm::document::EntryView;
 use leptos::*;
@@ -23,6 +25,33 @@ use crate::utils::clipboard;
 
 /// Attribute holding the entry UUID on each entry list row.
 pub const ENTRY_ATTRIBUTE: &str = "data-entry";
+
+/// Selector of the entry search box.
+const SEARCH_INPUT: &str = ".search-input";
+
+/// The key that moves focus to the entry search.
+pub struct SearchShortcut;
+
+pub const SEARCH_SHORTCUT: SearchShortcut = SearchShortcut;
+
+impl SearchShortcut {
+    fn matches(&self, event: &KeyboardEvent) -> bool {
+        (event.ctrl_key() || event.meta_key())
+            && !event.alt_key()
+            && !event.shift_key()
+            && pressed_letter(event) == Some('f')
+    }
+
+    /// Binding as shown to the user: "Ctrl+F" or "⌘F".
+    pub fn label(&self) -> &'static str {
+        if is_mac() { "⌘F" } else { "Ctrl+F" }
+    }
+
+    /// Value for `aria-keyshortcuts`.
+    pub fn aria(&self) -> &'static str {
+        "Control+F Meta+F"
+    }
+}
 
 /// A key that copies a value of the focused entry.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -151,10 +180,12 @@ pub fn install_entry_shortcuts(state: AppState) {
         if event.default_prevented() || event.repeat() || event.is_composing() {
             return;
         }
-        let Some(shortcut) = CopyShortcut::ALL.into_iter().find(|s| s.matches(&event)) else {
+        let search = SEARCH_SHORTCUT.matches(&event);
+        let copy = CopyShortcut::ALL.into_iter().find(|s| s.matches(&event));
+        if !search && copy.is_none() {
             return;
-        };
-        if state.active.get_untracked().is_none() || state.editor.with_untracked(Option::is_some) {
+        }
+        if state.active.get_untracked().is_none() {
             return;
         }
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
@@ -167,6 +198,18 @@ pub fn install_entry_shortcuts(state: AppState) {
             .flatten()
             .is_some()
         {
+            return;
+        }
+        if search {
+            if focus_search(state, &document) {
+                event.prevent_default();
+            }
+            return;
+        }
+        let Some(shortcut) = copy else {
+            return;
+        };
+        if state.editor.with_untracked(Option::is_some) {
             return;
         }
         // Leave keys alone while the user types, except in the entry search.
@@ -188,6 +231,39 @@ pub fn install_entry_shortcuts(state: AppState) {
             window.add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
     }
     handler.forget();
+}
+
+/// Moves focus to the entry search and selects its text. Returns false, leaving the
+/// key to the browser, when the search already has focus or cannot take it.
+fn focus_search(state: AppState, document: &Document) -> bool {
+    let Some(input) = document
+        .query_selector(SEARCH_INPUT)
+        .ok()
+        .flatten()
+        .and_then(|element| element.dyn_into::<HtmlInputElement>().ok())
+    else {
+        return false;
+    };
+    if document.active_element().as_deref() == Some(input.as_ref()) {
+        return false;
+    }
+    let hidden = input.offset_parent().is_none();
+    let focus = move || {
+        let _ = input.focus();
+        input.select();
+    };
+    // Narrow screens hide the list behind the open entry; close the entry first,
+    // but never an editor with unsaved input.
+    if hidden {
+        if state.editor.with_untracked(Option::is_some) {
+            return false;
+        }
+        state.selected_entry.set(None);
+        request_animation_frame(focus);
+    } else {
+        focus();
+    }
+    true
 }
 
 /// Whether keyboard focus is in a writable text field other than the entry search.
@@ -243,10 +319,12 @@ fn has_text_selection(document: &Document) -> bool {
         .is_some_and(|selection| !selection.is_collapsed())
 }
 
-/// The entry row with keyboard focus, else the entry open in the detail panel.
+/// The entry row with keyboard focus, the search cursor while the search box has
+/// focus, else the entry open in the detail panel.
 fn target_entry(state: AppState, document: &Document) -> Option<EntryView> {
-    let focused = document
-        .active_element()
+    let active = document.active_element();
+    let focused = active
+        .as_ref()
         .and_then(|element| {
             element
                 .closest(&format!("[{ENTRY_ATTRIBUTE}]"))
@@ -255,7 +333,13 @@ fn target_entry(state: AppState, document: &Document) -> Option<EntryView> {
         })
         .and_then(|row| row.get_attribute(ENTRY_ATTRIBUTE))
         .and_then(|uuid| Uuid::parse_str(&uuid).ok());
-    let uuid = focused.or_else(|| state.selected_entry.get_untracked())?;
+    let in_search = active.is_some_and(|element| element.matches(SEARCH_INPUT).unwrap_or(false));
+    let cursor = in_search
+        .then(|| state.search_cursor.get_untracked())
+        .flatten();
+    let uuid = focused
+        .or(cursor)
+        .or_else(|| state.selected_entry.get_untracked())?;
     state
         .entries
         .with_untracked(|entries| entries.iter().find(|entry| entry.uuid == uuid).cloned())
