@@ -2621,6 +2621,18 @@ textarea {
     border: 1px solid color-mix(in srgb, var(--color-error) 40%, var(--color-border));
 }
 
+.toast-info {
+    padding-right: var(--space-4);
+    color: var(--color-text);
+    background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+    border: 1px solid color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+    pointer-events: none;
+}
+
+.toast-info .ui-icon {
+    color: var(--color-accent);
+}
+
 .toast span {
     flex: 1;
     overflow-wrap: anywhere;

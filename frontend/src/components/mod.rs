@@ -10,6 +10,7 @@ pub mod guard;
 pub mod icons;
 pub mod panes;
 pub mod password_generator;
+pub mod shortcuts;
 pub mod sidebar;
 pub mod theme_toggle;
 pub mod unlock_dialog;

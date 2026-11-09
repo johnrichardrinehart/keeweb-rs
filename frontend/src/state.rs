@@ -21,6 +21,8 @@ use zeroize::Zeroizing;
 
 /// How many times a save merges with a newer server revision before giving up.
 const MAX_MERGE_ATTEMPTS: usize = 3;
+/// How long a copy button shows its check mark, and a notice stays on screen.
+const FEEDBACK_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Which screen is showing, see [`AppState::view`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -407,6 +409,10 @@ pub struct AppState {
     pub search_query: RwSignal<String>,
     /// Error of the active vault, or of the picker
     pub error_message: RwSignal<Option<String>>,
+    /// Copy button of the open entry whose value was just copied, by field key
+    pub copied_field: RwSignal<Option<String>>,
+    /// Short-lived confirmation, e.g. of a value copied by a keyboard shortcut
+    pub notice: RwSignal<Option<String>>,
     /// Connection state for the localhost native unlock helper
     pub helper_status: RwSignal<HelperStatus>,
     /// Backend URL (if configured)
@@ -450,6 +456,8 @@ impl AppState {
             selected_entry: create_rw_signal(None),
             search_query: create_rw_signal(String::new()),
             error_message: create_rw_signal(None),
+            copied_field: create_rw_signal(None),
+            notice: create_rw_signal(None),
             helper_status: create_rw_signal(HelperStatus::Checking),
             backend_url: create_rw_signal(None),
             theme: create_rw_signal(initial_theme),
@@ -934,6 +942,34 @@ impl AppState {
                 None
             }
         }
+    }
+
+    /// Shows the check mark on the copy button of field `key` for a moment.
+    pub fn mark_copied(&self, key: String) {
+        let copied = self.copied_field;
+        copied.set(Some(key.clone()));
+        set_timeout(
+            move || {
+                if copied.with_untracked(|current| current.as_deref() == Some(key.as_str())) {
+                    copied.set(None);
+                }
+            },
+            FEEDBACK_FOR,
+        );
+    }
+
+    /// Shows `message` in a toast for a moment.
+    pub fn show_notice(&self, message: String) {
+        let notice = self.notice;
+        notice.set(Some(message.clone()));
+        set_timeout(
+            move || {
+                if notice.with_untracked(|current| current.as_ref() == Some(&message)) {
+                    notice.set(None);
+                }
+            },
+            FEEDBACK_FOR,
+        );
     }
 
     pub fn attachment(&self, entry: Uuid, name: &str) -> Option<Vec<u8>> {

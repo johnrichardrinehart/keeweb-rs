@@ -192,6 +192,8 @@ fn EntryListItem(row: EntryRow) -> impl IntoView {
             class:selected=selected
             aria-current=move || selected().then_some("true")
             title=row.title.clone()
+            // Copy shortcuts act on the row with focus, see `shortcuts::ENTRY_ATTRIBUTE`.
+            data-entry=uuid.to_string()
             on:click=move |_| {
                 state.editor.set(None);
                 state.selected_entry.set(Some(uuid));

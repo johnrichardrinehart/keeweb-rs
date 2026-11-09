@@ -7,13 +7,14 @@ use wasm_bindgen_futures::spawn_local;
 
 use crate::components::dialog::{ConfirmDialog, GroupPicker};
 use crate::components::icons::{Icon, KeepassIcon, UiIcon};
+use crate::components::shortcuts::CopyShortcut;
 use crate::model::{self, NOTES, PASSWORD, URL, USER_NAME};
 use crate::state::{AppState, EntryEditor};
 use crate::utils::{clipboard, files};
 
 mod editor;
 mod history;
-mod totp;
+pub(crate) mod totp;
 
 pub use editor::EntryEditorPanel;
 use history::HistoryViewer;
@@ -45,13 +46,14 @@ pub fn EntryDetail() -> impl IntoView {
     // Created outside the per-entry closure so they survive re-renders caused by
     // edits of the same entry (e.g. deleting a history version).
     let show_password = create_rw_signal(false);
-    let copied_field = create_rw_signal(Option::<String>::None);
+    let copied_field = state.copied_field;
     let modal = create_rw_signal(Option::<DetailModal>::None);
 
     create_effect(move |previous: Option<Option<Uuid>>| {
         let current = state.selected_entry.get();
         if previous.is_some_and(|previous| previous != current) {
             show_password.set(false);
+            copied_field.set(None);
             modal.set(None);
         }
         current
@@ -74,11 +76,10 @@ pub fn EntryDetail() -> impl IntoView {
     }
 }
 
-fn copy_value(value: String, key: String, copied: RwSignal<Option<String>>) {
+fn copy_value(state: AppState, value: String, key: String) {
     spawn_local(async move {
         if clipboard::copy_to_clipboard(&value).await.is_ok() {
-            copied.set(Some(key));
-            set_timeout(move || copied.set(None), std::time::Duration::from_secs(2));
+            state.mark_copied(key);
         }
     });
 }
@@ -133,8 +134,7 @@ fn EntryDetailContent(
         .with_untracked(|groups| model::group_path(groups, group_uuid));
     let has_meta = !entry.tags.is_empty() || entry.expires || in_recycle_bin;
 
-    let copy =
-        move |value: String, key: &'static str| copy_value(value, key.to_string(), copied_field);
+    let copy = move |value: String, key: &'static str| copy_value(state, value, key.to_string());
     let is_copied = move |key: &'static str| move || copied_field.get().as_deref() == Some(key);
     let username_for_copy = username.clone();
     let password_for_copy = password.clone();
@@ -293,8 +293,9 @@ fn EntryDetailContent(
                                 class="btn-icon btn-icon-sm"
                                 class:copied=is_copied("username")
                                 on:click=move |_| copy(username_for_copy.clone(), "username")
-                                title="Copy username"
+                                title=CopyShortcut::Username.hint("Copy username")
                                 aria-label="Copy username"
+                                aria-keyshortcuts=CopyShortcut::Username.aria()
                             >
                                 {copy_glyph(is_copied("username"))}
                             </button>
@@ -326,8 +327,9 @@ fn EntryDetailContent(
                                 class="btn-icon btn-icon-sm"
                                 class:copied=is_copied("password")
                                 on:click=move |_| copy(password_for_copy.clone(), "password")
-                                title="Copy password"
+                                title=CopyShortcut::Password.hint("Copy password")
                                 aria-label="Copy password"
+                                aria-keyshortcuts=CopyShortcut::Password.aria()
                             >
                                 {copy_glyph(is_copied("password"))}
                             </button>
@@ -357,8 +359,9 @@ fn EntryDetailContent(
                                 class="btn-icon btn-icon-sm"
                                 class:copied=is_copied("url")
                                 on:click=move |_| copy(url_for_copy.clone(), "url")
-                                title="Copy URL"
+                                title=CopyShortcut::Url.hint("Copy URL")
                                 aria-label="Copy URL"
+                                aria-keyshortcuts=CopyShortcut::Url.aria()
                             >
                                 {copy_glyph(is_copied("url"))}
                             </button>
@@ -521,6 +524,7 @@ fn CustomFieldView(
     protected: bool,
     copied_field: RwSignal<Option<String>>,
 ) -> impl IntoView {
+    let state = expect_context::<AppState>();
     let shown = create_rw_signal(!protected);
     let copy_key = format!("field:{key}");
     let copy_key_check = copy_key.clone();
@@ -564,7 +568,7 @@ fn CustomFieldView(
                     type="button"
                     class="btn-icon btn-icon-sm"
                     class:copied=is_copied.clone()
-                    on:click=move |_| copy_value(value_for_copy.clone(), copy_key.clone(), copied_field)
+                    on:click=move |_| copy_value(state, value_for_copy.clone(), copy_key.clone())
                     title="Copy value"
                     aria-label=format!("Copy {label}")
                 >
@@ -578,6 +582,7 @@ fn CustomFieldView(
 /// TOTP field component
 #[component]
 fn TotpField(otp_value: String, copied_field: RwSignal<Option<String>>) -> impl IntoView {
+    let state = expect_context::<AppState>();
     let totp_code = create_rw_signal(String::new());
     let totp_remaining = create_rw_signal(0u32);
     let totp_period = create_rw_signal(30u32);
@@ -605,8 +610,7 @@ fn TotpField(otp_value: String, copied_field: RwSignal<Option<String>>) -> impl 
         }
     });
 
-    let copy_totp =
-        move |_| copy_value(totp_code.get_untracked(), "totp".to_string(), copied_field);
+    let copy_totp = move |_| copy_value(state, totp_code.get_untracked(), "totp".to_string());
     let is_copied = move || copied_field.get().as_deref() == Some("totp");
 
     view! {
@@ -649,8 +653,9 @@ fn TotpField(otp_value: String, copied_field: RwSignal<Option<String>>) -> impl 
                     class="btn-icon btn-icon-sm"
                     class:copied=is_copied
                     on:click=copy_totp
-                    title="Copy TOTP code"
+                    title=CopyShortcut::Otp.hint("Copy TOTP code")
                     aria-label="Copy TOTP code"
+                    aria-keyshortcuts=CopyShortcut::Otp.aria()
                 >
                     {copy_glyph(is_copied)}
                 </button>

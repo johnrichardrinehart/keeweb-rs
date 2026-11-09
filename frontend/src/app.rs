@@ -14,6 +14,7 @@ use crate::components::{
     },
     icons::{Icon, UiIcon},
     panes::{Pane, Splitter, fit, viewport_width},
+    shortcuts::install_entry_shortcuts,
     sidebar::Sidebar,
     theme_toggle::ThemeToggle,
     unlock_dialog::UnlockDialog,
@@ -56,6 +57,7 @@ pub fn App() -> impl IntoView {
 
     install_unload_guard(state);
     install_save_shortcut(state);
+    install_entry_shortcuts(state);
 
     let unlocking = move || state.view() == AppView::Unlock;
     // Each vault gets fresh components, so per-component state never leaks between tabs.
@@ -355,6 +357,14 @@ fn DatabaseView() -> impl IntoView {
                     >
                         <UiIcon icon=Icon::X size=16 />
                     </button>
+                </div>
+            </Show>
+            <Show when=move || {
+                state.notice.with(Option::is_some) && state.error_message.with(Option::is_none)
+            }>
+                <div class="toast toast-info" role="status">
+                    <UiIcon icon=Icon::Check />
+                    <span>{move || state.notice.get().unwrap_or_default()}</span>
                 </div>
             </Show>
         </div>
