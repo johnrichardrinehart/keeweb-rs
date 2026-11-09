@@ -3,6 +3,7 @@
 use leptos::*;
 use wasm_bindgen_futures::spawn_local;
 
+use crate::components::shortcuts::LOCK_SHORTCUT;
 use crate::components::{
     auto_lock::AutoLock,
     database_settings::DatabaseSettings,
@@ -182,8 +183,9 @@ fn Header() -> impl IntoView {
                             type="button"
                             class="btn-icon"
                             on:click=move |_| state.request_lock()
-                            title="Lock this vault and forget its keys"
+                            title=format!("Lock this vault and forget its keys ({})", LOCK_SHORTCUT.label())
                             aria-label="Lock vault"
+                            aria-keyshortcuts=LOCK_SHORTCUT.aria()
                         >
                             <UiIcon icon=Icon::Lock />
                         </button>

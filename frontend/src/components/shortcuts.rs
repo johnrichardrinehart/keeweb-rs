@@ -1,7 +1,8 @@
 //! Keyboard shortcuts of an open vault.
 //!
 //! Ctrl/⌘+F moves focus to the entry search; pressed again there, it opens the
-//! browser's own find bar.
+//! browser's own find bar. Ctrl/⌘+L or Alt/⌥+L locks the open vault, also while
+//! typing, like the lock button.
 //!
 //! The copy shortcuts act on the entry row that has keyboard focus in the list, the
 //! search cursor while the search box has focus, otherwise the entry open in the
@@ -50,6 +51,33 @@ impl SearchShortcut {
     /// Value for `aria-keyshortcuts`.
     pub fn aria(&self) -> &'static str {
         "Control+F Meta+F"
+    }
+}
+
+/// The key that locks the open vault.
+pub struct LockShortcut;
+
+pub const LOCK_SHORTCUT: LockShortcut = LockShortcut;
+
+impl LockShortcut {
+    fn matches(&self, event: &KeyboardEvent) -> bool {
+        if event.shift_key() || pressed_letter(event) != Some('l') {
+            return false;
+        }
+        let ctrl = event.ctrl_key() || event.meta_key();
+        // Ctrl/⌘+L takes precedence over the address bar; Alt/⌥+L is the
+        // fallback where a browser keeps Ctrl+L for itself.
+        ctrl != event.alt_key()
+    }
+
+    /// Binding as shown to the user: "Ctrl+L" or "⌘L".
+    pub fn label(&self) -> &'static str {
+        if is_mac() { "⌘L" } else { "Ctrl+L" }
+    }
+
+    /// Value for `aria-keyshortcuts`.
+    pub fn aria(&self) -> &'static str {
+        "Control+L Meta+L Alt+L"
     }
 }
 
@@ -181,8 +209,9 @@ pub fn install_entry_shortcuts(state: AppState) {
             return;
         }
         let search = SEARCH_SHORTCUT.matches(&event);
+        let lock = LOCK_SHORTCUT.matches(&event);
         let copy = CopyShortcut::ALL.into_iter().find(|s| s.matches(&event));
-        if !search && copy.is_none() {
+        if !search && !lock && copy.is_none() {
             return;
         }
         if state.active.get_untracked().is_none() {
@@ -198,6 +227,11 @@ pub fn install_entry_shortcuts(state: AppState) {
             .flatten()
             .is_some()
         {
+            return;
+        }
+        if lock {
+            event.prevent_default();
+            state.request_lock();
             return;
         }
         if search {
