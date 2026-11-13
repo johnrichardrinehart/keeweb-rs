@@ -20,10 +20,6 @@ thread_local! {
     static ARGON2_READY: RefCell<bool> = const { RefCell::new(false) };
 }
 
-/// Without the helper, files needing this much Argon2 memory skip the parallel
-/// WebAssembly build, which cannot allocate it.
-const PARALLEL_MEMORY_LIMIT_MB: u64 = 256;
-
 /// Initialize the argon2-pthread worker (call once at startup).
 pub fn init_argon2<F>(callback: F)
 where
@@ -128,8 +124,6 @@ pub async fn derive_transformed_key(
     params: &WasmKdfParams,
     composite_key: &[u8; 32],
 ) -> Result<Key, String> {
-    let memory_mb = params.memory_kb() / 1024;
-
     // Native Argon2 is several times faster than WebAssembly at every memory size.
     if helper_client::is_helper_configured() {
         match helper_client::check_helper_available().await {
@@ -147,24 +141,23 @@ pub async fn derive_transformed_key(
                 .await
                 {
                     Ok((key, _server_time_ms)) => return into_key(key),
-                    Err(e) => log::warn!("Helper Argon2 failed ({e}); using the slow fallback"),
+                    Err(e) => log::warn!("Helper Argon2 failed ({e}); using WebAssembly"),
                 }
             }
-            Ok(false) => log::info!("Helper unavailable; using the slow fallback"),
-            Err(e) => log::warn!("Helper check failed ({e}); using the slow fallback"),
+            Ok(false) => log::info!("Helper unavailable; using WebAssembly"),
+            Err(e) => log::warn!("Helper check failed ({e}); using WebAssembly"),
         }
-        return worker_argon2(params, composite_key, false).await;
     }
 
-    if memory_mb >= PARALLEL_MEMORY_LIMIT_MB {
-        return worker_argon2(params, composite_key, false).await;
-    }
-
-    if is_argon2_ready() {
+    // The parallel build starts with 1 GiB of shared memory and grows to 4 GiB, so it
+    // handles high-memory files too; if it fails, the key worker retries single-threaded.
+    let parallel_tried = is_argon2_ready();
+    if parallel_tried {
         match parallel_argon2(params, composite_key).await {
             Ok(key) => return Ok(key),
             Err(e) => log::warn!("Parallel Argon2 failed ({e}); retrying in the key worker"),
         }
     }
-    worker_argon2(params, composite_key, true).await
+    // Without a failed parallel attempt, the key worker may still try its own SIMD build.
+    worker_argon2(params, composite_key, !parallel_tried).await
 }
