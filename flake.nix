@@ -40,15 +40,11 @@
         rustToolchain = config.keeweb-rs.rustToolchain;
 
         # Common build inputs for Rust projects
-        buildInputs = with pkgs;
-          [
-            openssl
-            pkg-config
-          ]
-          ++ lib.optionals stdenv.isDarwin [
-            darwin.apple_sdk.frameworks.Security
-            darwin.apple_sdk.frameworks.SystemConfiguration
-          ];
+        # The default Darwin stdenv provides the Apple SDK frameworks.
+        buildInputs = with pkgs; [
+          openssl
+          pkg-config
+        ];
 
         nativeBuildInputs = with pkgs; [
           pkg-config
@@ -169,11 +165,7 @@
               cargoHash = "sha256-iqQiWbsKlLBiJFeqIYiXo3cqxGLSjNM8SOWXGM9u43E=";
 
               nativeBuildInputs = [pkgs.pkg-config];
-              buildInputs =
-                [pkgs.openssl]
-                ++ lib.optionals pkgs.stdenv.isDarwin [
-                  pkgs.darwin.apple_sdk.frameworks.Security
-                ];
+              buildInputs = [pkgs.openssl];
             };
           in
             pkgs.stdenv.mkDerivation {
